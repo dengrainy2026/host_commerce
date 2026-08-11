@@ -1,0 +1,220 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:host_commerce/host_commerce.dart';
+
+import 'src/test_catalog.dart';
+
+void main() {
+  testWidgets(
+    'membership purchase shows HUD then exits with success feedback',
+    (WidgetTester tester) async {
+      final Completer<void> purchase = Completer<void>();
+
+      await tester.pumpWidget(
+        _ScreenLauncher(
+          child: MembershipSubscriptionScreen(
+            catalog: testCatalog,
+            appearance: testAppearance,
+            onLoadProducts: _loadStoreProducts,
+            onSubscribe: (_) => purchase.future,
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text(r'$1.99 USD'), findsNWidgets(2));
+      expect(find.text('Store price'), findsNothing);
+
+      final Finder list = find.byKey(
+        const PageStorageKey<String>('subscription-list'),
+      );
+      final Finder scrollable = find.descendant(
+        of: list,
+        matching: find.byType(Scrollable),
+      );
+      final Finder continueButton = find.byKey(
+        const ValueKey<String>('subscribe-continue'),
+      );
+      await tester.scrollUntilVisible(
+        continueButton,
+        160,
+        scrollable: scrollable,
+      );
+      await tester.tap(continueButton);
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey<String>('commerce-loading-hud')),
+        findsOneWidget,
+      );
+      expect(find.text('Processing purchase…'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('commerce-loading-hud')),
+          matching: find.byType(Material),
+        ),
+        findsOneWidget,
+      );
+
+      purchase.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(MembershipSubscriptionScreen), findsNothing);
+      expect(find.text('Veditor Pro activated successfully.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('cancelled membership purchase dismisses the HUD', (
+    WidgetTester tester,
+  ) async {
+    final Completer<void> purchase = Completer<void>();
+
+    await tester.pumpWidget(
+      _ScreenLauncher(
+        child: MembershipSubscriptionScreen(
+          catalog: testCatalog,
+          appearance: testAppearance,
+          onLoadProducts: _loadStoreProducts,
+          onSubscribe: (_) => purchase.future,
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    final Finder list = find.byKey(
+      const PageStorageKey<String>('subscription-list'),
+    );
+    final Finder scrollable = find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    );
+    final Finder continueButton = find.byKey(
+      const ValueKey<String>('subscribe-continue'),
+    );
+    await tester.scrollUntilVisible(
+      continueButton,
+      160,
+      scrollable: scrollable,
+    );
+    await tester.tap(continueButton);
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('commerce-loading-hud')),
+      findsOneWidget,
+    );
+
+    purchase.completeError(const HostPurchaseCanceledException());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('commerce-loading-hud')),
+      findsNothing,
+    );
+    expect(find.text('Purchase cancelled.'), findsOneWidget);
+    expect(find.byType(MembershipSubscriptionScreen), findsOneWidget);
+  });
+
+  testWidgets('credit purchase shows HUD and refreshes the visible balance', (
+    WidgetTester tester,
+  ) async {
+    final Completer<int> purchase = Completer<int>();
+    int? requestedCredits;
+
+    await tester.pumpWidget(
+      _ScreenLauncher(
+        child: CreditPurchaseScreen(
+          catalog: testCatalog,
+          appearance: testAppearance,
+          balance: 24,
+          onLoadProducts: _loadStoreProducts,
+          onPurchase: (int credits) {
+            requestedCredits = credits;
+            return purchase.future;
+          },
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(r'$1.99 USD'), findsNWidgets(4));
+    expect(find.text('Store price'), findsNothing);
+
+    final Finder list = find.byKey(
+      const PageStorageKey<String>('credit-purchase-list'),
+    );
+    final Finder scrollable = find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    );
+    final Finder continueButton = find.byKey(
+      const ValueKey<String>('credits-continue'),
+    );
+    await tester.scrollUntilVisible(
+      continueButton,
+      160,
+      scrollable: scrollable,
+    );
+    await tester.tap(continueButton);
+    await tester.pump();
+
+    expect(requestedCredits, 300);
+    expect(
+      find.byKey(const ValueKey<String>('commerce-loading-hud')),
+      findsOneWidget,
+    );
+    expect(find.text('Processing purchase…'), findsOneWidget);
+
+    purchase.complete(324);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CreditPurchaseScreen), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('commerce-loading-hud')),
+      findsNothing,
+    );
+    await tester.drag(scrollable, const Offset(0, 1200));
+    await tester.pumpAndSettle();
+    expect(find.text('324'), findsOneWidget);
+  });
+}
+
+Future<Map<String, HostStoreProduct>> _loadStoreProducts(
+  Set<String> productIds,
+) async => <String, HostStoreProduct>{
+  for (final String productId in productIds)
+    productId: HostStoreProduct(
+      productId: productId,
+      localizedPrice: r'$1.99',
+      currencyCode: 'USD',
+    ),
+};
+
+final class _ScreenLauncher extends StatelessWidget {
+  const _ScreenLauncher({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (BuildContext context) => Center(
+            child: FilledButton(
+              onPressed: () => Navigator.of(
+                context,
+              ).push<void>(MaterialPageRoute<void>(builder: (_) => child)),
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

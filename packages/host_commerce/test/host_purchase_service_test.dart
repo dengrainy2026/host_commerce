@@ -1,0 +1,449 @@
+import 'dart:async';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:host_commerce/host_commerce.dart';
+
+import 'src/test_catalog.dart';
+
+void main() {
+  test('loads localized store prices with their currency codes', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+    );
+
+    final products = await service.loadProducts(testCatalog.allSubscriptionIds);
+
+    expect(products.keys, containsAll(testCatalog.allSubscriptionIds));
+    expect(
+      products[testCatalog.weeklySubscriptionId]!.displayPrice,
+      r'$1.99 USD',
+    );
+    await service.dispose();
+    await client.dispose();
+  });
+
+  test(
+    'successful host purchase stores membership without verification',
+    () async {
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(),
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final _FakePurchaseClient client = _FakePurchaseClient();
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+      )..initialize();
+
+      final Future<void> purchase = service.purchaseSubscription(
+        testCatalog.weeklySubscriptionId,
+      );
+      await _flushPurchaseStream();
+      client.emit(
+        _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.purchased),
+      );
+      await purchase;
+
+      expect(commerceRepository.state.isMember, isTrue);
+      expect(commerceRepository.state.membershipCredits, 1000);
+      expect(client.completedPurchases, 1);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test(
+    'empty-product Android cancellation ends the active host purchase',
+    () async {
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(),
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final _FakePurchaseClient client = _FakePurchaseClient();
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+      )..initialize();
+
+      final Future<void> purchase = service.purchaseSubscription(
+        testCatalog.weeklySubscriptionId,
+      );
+      await _flushPurchaseStream();
+      client.emit(
+        _purchase('', PurchaseStatus.canceled, pendingCompletePurchase: false),
+      );
+
+      await expectLater(
+        purchase,
+        throwsA(isA<HostPurchaseCanceledException>()),
+      );
+      expect(commerceRepository.state.isMember, isFalse);
+      expect(client.completedPurchases, 0);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test(
+    'cancelled host purchase finishes StoreKit transaction before retry',
+    () async {
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(),
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final _FakePurchaseClient client = _FakePurchaseClient();
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+      )..initialize();
+
+      final Future<void> firstPurchase = service.purchaseSubscription(
+        testCatalog.weeklySubscriptionId,
+      );
+      await _flushPurchaseStream();
+      client.emit(
+        _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.canceled),
+      );
+
+      await expectLater(
+        firstPurchase,
+        throwsA(isA<HostPurchaseCanceledException>()),
+      );
+      expect(client.completedPurchases, 1);
+
+      final Future<void> retry = service.purchaseSubscription(
+        testCatalog.weeklySubscriptionId,
+      );
+      await _flushPurchaseStream();
+      expect(client.nonConsumablePurchases, 2);
+      client.emit(
+        _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.purchased),
+      );
+      await retry;
+
+      expect(client.completedPurchases, 2);
+      expect(commerceRepository.state.isMember, isTrue);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test('orphaned failed StoreKit transaction is finished on startup', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+    )..initialize();
+
+    client.emit(
+      _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.canceled),
+    );
+    await _flushPurchaseStream();
+
+    expect(client.completedPurchases, 1);
+    expect(commerceRepository.state.isMember, isFalse);
+    await service.dispose();
+    await client.dispose();
+  });
+
+  test('host does not finish an H5-owned failed transaction', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final StoreOperationCoordinator coordinator = StoreOperationCoordinator();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+      operationCoordinator: coordinator,
+    )..initialize();
+    final Completer<void> finishH5 = Completer<void>();
+    final Future<void> h5Operation = coordinator.run(
+      StoreOperationOwner.h5,
+      () => finishH5.future,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    client.emit(
+      _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.canceled),
+    );
+    await _flushPurchaseStream();
+
+    expect(client.completedPurchases, 0);
+    finishH5.complete();
+    await h5Operation;
+    await service.dispose();
+    await client.dispose();
+  });
+
+  test(
+    'successful host restore stores membership without verification',
+    () async {
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(),
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final _FakePurchaseClient client = _FakePurchaseClient();
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+        restoreSettleDuration: const Duration(milliseconds: 50),
+      )..initialize();
+
+      final Future<void> restore = service.restorePurchases();
+      await _flushPurchaseStream();
+      client.emit(
+        _purchase(testCatalog.yearlySubscriptionId, PurchaseStatus.restored),
+      );
+      await restore;
+
+      expect(commerceRepository.state.isMember, isTrue);
+      expect(client.completedPurchases, 1);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test('successful consumable purchase adds its fixed credit amount', () async {
+    final DateTime now = DateTime.utc(2026, 1, 1);
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(
+        HostCommerceState(
+          isMember: true,
+          permanentCredits: 20,
+          membershipExpiresAt: now.add(const Duration(days: 365)),
+          membershipCreditPeriodStartedAt: now,
+        ),
+      ),
+      clock: () => now,
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+    )..initialize();
+
+    final String credits500 = testCatalog.productIdForCredits(500);
+    final Future<void> purchase = service.purchaseCredits(credits500);
+    await _flushPurchaseStream();
+    client.emit(_purchase(credits500, PurchaseStatus.purchased));
+    await purchase;
+
+    expect(commerceRepository.state.creditBalance, 520);
+    expect(client.consumablePurchases, 1);
+    expect(client.completedPurchases, 1);
+    await service.dispose();
+    await client.dispose();
+  });
+
+  test(
+    'purchase updates not initiated by the host do not change host state',
+    () async {
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(),
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final _FakePurchaseClient client = _FakePurchaseClient();
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+      )..initialize();
+
+      client.emit(
+        _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.purchased),
+      );
+      client.emit(
+        _purchase(testCatalog.yearlySubscriptionId, PurchaseStatus.restored),
+      );
+      await _flushPurchaseStream();
+
+      expect(commerceRepository.state.isMember, isFalse);
+      expect(client.completedPurchases, 0);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test('H5 behavior cannot be consumed as a host purchase', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final StoreOperationCoordinator coordinator = StoreOperationCoordinator();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+      operationCoordinator: coordinator,
+    )..initialize();
+    final Completer<void> finishH5 = Completer<void>();
+    final Future<void> h5Operation = coordinator.run(
+      StoreOperationOwner.h5,
+      () => finishH5.future,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final Future<void> hostPurchase = service.purchaseSubscription(
+      testCatalog.weeklySubscriptionId,
+    );
+    client.emit(
+      _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.purchased),
+    );
+    await _flushPurchaseStream();
+
+    expect(commerceRepository.state.isMember, isFalse);
+    expect(client.nonConsumablePurchases, 0);
+
+    finishH5.complete();
+    await h5Operation;
+    await _flushPurchaseStream();
+    expect(client.nonConsumablePurchases, 1);
+
+    client.emit(
+      _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.purchased),
+    );
+    await hostPurchase;
+
+    expect(commerceRepository.state.isMember, isTrue);
+    await service.dispose();
+    await client.dispose();
+  });
+
+  test('non-members cannot start a host credit purchase', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+    )..initialize();
+
+    await expectLater(
+      service.purchaseCredits(testCatalog.productIdForCredits(300)),
+      throwsA(isA<StateError>()),
+    );
+    expect(client.consumablePurchases, 0);
+
+    await service.dispose();
+    await client.dispose();
+  });
+}
+
+Future<void> _flushPurchaseStream() async {
+  await Future<void>.delayed(const Duration(milliseconds: 5));
+}
+
+PurchaseDetails _purchase(
+  String productId,
+  PurchaseStatus status, {
+  bool pendingCompletePurchase = true,
+}) {
+  final PurchaseDetails purchase = PurchaseDetails(
+    purchaseID: 'purchase-id',
+    productID: productId,
+    verificationData: PurchaseVerificationData(
+      localVerificationData: 'not-verified',
+      serverVerificationData: 'not-verified',
+      source: 'test',
+    ),
+    transactionDate: '1',
+    status: status,
+  );
+  purchase.pendingCompletePurchase = pendingCompletePurchase;
+  return purchase;
+}
+
+final class _FakePurchaseClient implements HostInAppPurchaseClient {
+  final StreamController<List<PurchaseDetails>> _controller =
+      StreamController<List<PurchaseDetails>>.broadcast();
+  int completedPurchases = 0;
+  int consumablePurchases = 0;
+  int nonConsumablePurchases = 0;
+
+  @override
+  Stream<List<PurchaseDetails>> get purchaseStream => _controller.stream;
+
+  void emit(PurchaseDetails purchase) =>
+      _controller.add(<PurchaseDetails>[purchase]);
+
+  @override
+  Future<bool> isAvailable() async => true;
+
+  @override
+  Future<ProductDetailsResponse> queryProductDetails(
+    Set<String> identifiers,
+  ) async => ProductDetailsResponse(
+    productDetails: identifiers
+        .map(
+          (String identifier) => ProductDetails(
+            id: identifier,
+            title: 'Store product',
+            description: 'Store product',
+            price: r'$1.99',
+            rawPrice: 1.99,
+            currencyCode: 'USD',
+          ),
+        )
+        .toList(),
+    notFoundIDs: const <String>[],
+  );
+
+  @override
+  Future<bool> buyNonConsumable({required PurchaseParam purchaseParam}) async {
+    nonConsumablePurchases += 1;
+    return true;
+  }
+
+  @override
+  Future<bool> buyConsumable({required PurchaseParam purchaseParam}) async {
+    consumablePurchases += 1;
+    return true;
+  }
+
+  @override
+  Future<void> restorePurchases() async {}
+
+  @override
+  Future<void> completePurchase(PurchaseDetails purchase) async {
+    completedPurchases += 1;
+  }
+
+  Future<void> dispose() => _controller.close();
+}

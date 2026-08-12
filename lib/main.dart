@@ -11,53 +11,68 @@ import 'home_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  final HostProductCatalog catalog = kAppConfig.currentCatalog;
   final HostCommerceRepository commerceRepository = HostCommerceRepository(
     SecureHostCommerceStore(),
+    rules: kAppConfig.commerceRules,
   );
   await commerceRepository.initialize();
   final HostPurchaseService purchaseService = HostPurchaseService(
     commerceRepository,
-    catalog: buildCatalog(),
+    catalog: catalog,
+    verifier: _buildPurchaseVerifier(),
   )..initialize();
 
   runApp(
     VeditorCommerceApp(
+      config: kAppConfig,
       commerceRepository: commerceRepository,
       purchaseService: purchaseService,
-      appearance: buildAppearance(),
-      catalog: buildCatalog(),
+      catalog: catalog,
     ),
   );
 }
 
+HostPurchaseVerifier _buildPurchaseVerifier() {
+  const String verificationUrl = String.fromEnvironment(
+    'NATIVE_PURCHASE_VERIFICATION_URL',
+  );
+  final Uri? endpoint = Uri.tryParse(verificationUrl);
+  if (endpoint == null || endpoint.scheme != 'https' || endpoint.host.isEmpty) {
+    return const RejectingHostPurchaseVerifier();
+  }
+  return HttpHostPurchaseVerifier(endpoint);
+}
+
 final class VeditorCommerceApp extends StatelessWidget {
   const VeditorCommerceApp({
+    required this.config,
     required this.commerceRepository,
     required this.purchaseService,
-    required this.appearance,
     required this.catalog,
     super.key,
   });
 
+  final AppConfig config;
   final HostCommerceRepository commerceRepository;
   final HostPurchaseService purchaseService;
-  final CommerceAppearance appearance;
   final HostProductCatalog catalog;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: appearance.appDisplayName,
+      title: config.appearance.appDisplayName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
+        colorScheme: ColorScheme.fromSeed(seedColor: config.themeSeedColor),
         useMaterial3: true,
       ),
       home: HomeScreen(
         commerceRepository: commerceRepository,
         purchaseService: purchaseService,
-        appearance: appearance,
+        appearance: config.appearance,
         catalog: catalog,
+        tool: config.tool,
       ),
     );
   }

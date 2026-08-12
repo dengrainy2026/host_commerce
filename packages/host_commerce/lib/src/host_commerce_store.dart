@@ -6,8 +6,11 @@ import 'host_commerce_state.dart';
 import 'permanent_host_mode.dart';
 
 /// Persistence boundary for [HostCommerceState].
-abstract interface class HostCommerceStore implements PermanentHostModeChecking {
-  Future<HostCommerceState> read();
+abstract interface class HostCommerceStore
+    implements PermanentHostModeChecking {
+  Future<HostCommerceState> read({
+    HostCommerceState fallback = const HostCommerceState(),
+  });
 
   Future<void> write(HostCommerceState state);
 
@@ -25,19 +28,21 @@ final class SecureHostCommerceStore implements HostCommerceStore {
   final FlutterSecureStorage _storage;
 
   @override
-  Future<HostCommerceState> read() async {
+  Future<HostCommerceState> read({
+    HostCommerceState fallback = const HostCommerceState(),
+  }) async {
     final String? encoded = await _storage.read(key: stateKey);
     if (encoded == null || encoded.isEmpty) {
-      return const HostCommerceState();
+      return fallback;
     }
     try {
       final Object? decoded = jsonDecode(encoded);
       if (decoded is! Map) {
-        return const HostCommerceState();
+        return fallback;
       }
       return HostCommerceState.fromJson(Map<String, Object?>.from(decoded));
     } on Object {
-      return const HostCommerceState();
+      return fallback;
     }
   }
 
@@ -50,22 +55,34 @@ final class SecureHostCommerceStore implements HostCommerceStore {
   Future<void> clear() => _storage.delete(key: stateKey);
 
   @override
-  Future<bool> isPermanentHostModeEnabled() async => (await read()).hasRedeemedCode;
+  Future<bool> isPermanentHostModeEnabled() async =>
+      (await read()).hasRedeemedCode;
 }
 
 final class MemoryHostCommerceStore implements HostCommerceStore {
-  MemoryHostCommerceStore([this.state = const HostCommerceState()]);
+  MemoryHostCommerceStore([HostCommerceState? initialState])
+    : state = initialState ?? const HostCommerceState(),
+      _hasState = initialState != null;
 
   HostCommerceState state;
+  bool _hasState;
 
   @override
-  Future<HostCommerceState> read() async => state;
+  Future<HostCommerceState> read({
+    HostCommerceState fallback = const HostCommerceState(),
+  }) async => _hasState ? state : fallback;
 
   @override
-  Future<void> write(HostCommerceState state) async => this.state = state;
+  Future<void> write(HostCommerceState state) async {
+    this.state = state;
+    _hasState = true;
+  }
 
   @override
-  Future<void> clear() async => state = const HostCommerceState();
+  Future<void> clear() async {
+    state = const HostCommerceState();
+    _hasState = false;
+  }
 
   @override
   Future<bool> isPermanentHostModeEnabled() async => state.hasRedeemedCode;

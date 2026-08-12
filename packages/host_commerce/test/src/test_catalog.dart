@@ -17,4 +17,6 @@ const HostProductCatalog testCatalog = HostProductCatalog(
 /// activation message.
 const CommerceAppearance testAppearance = CommerceAppearance(
   appDisplayName: 'Veditor',
+  privacyPolicyUrl: 'https://example.test/privacy',
+  termsOfUseUrl: 'https://example.test/terms',
 );

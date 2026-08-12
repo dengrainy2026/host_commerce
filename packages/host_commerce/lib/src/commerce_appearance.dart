@@ -35,8 +35,8 @@ final class CommerceIcons {
 final class CommerceAppearance {
   const CommerceAppearance({
     required this.appDisplayName,
-    this.privacyPolicyUrl,
-    this.termsOfUseUrl,
+    required this.privacyPolicyUrl,
+    required this.termsOfUseUrl,
     this.icons = const CommerceIcons(),
     this.systemUiStyle = const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -52,11 +52,11 @@ final class CommerceAppearance {
 
   final String appDisplayName;
 
-  /// Privacy-policy URL shown in the legal footer; hidden when null.
-  final String? privacyPolicyUrl;
+  /// HTTPS privacy-policy URL shown on every commerce screen.
+  final String privacyPolicyUrl;
 
-  /// Terms-of-use URL shown in the legal footer; hidden when null.
-  final String? termsOfUseUrl;
+  /// HTTPS terms-of-use URL shown on every commerce screen.
+  final String termsOfUseUrl;
 
   final CommerceIcons icons;
   final SystemUiOverlayStyle systemUiStyle;

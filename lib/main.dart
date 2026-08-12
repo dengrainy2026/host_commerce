@@ -10,6 +10,7 @@ import 'home_screen.dart';
 /// A new app replaces the placeholder tool on [HomeScreen] with its own tools.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeHostCommerceStoreKit();
 
   final HostProductCatalog catalog = kAppConfig.currentCatalog;
   final HostCommerceRepository commerceRepository = HostCommerceRepository(

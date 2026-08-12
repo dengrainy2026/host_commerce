@@ -2,7 +2,7 @@ name: host_commerce
 description: >-
   Reusable commerce contract layer for Flutter apps: membership/credits state,
   in-app purchase and restore, and paywall screens. Extracted from Veditor.
-version: 0.4.1
+version: 0.4.2
 publish_to: none
 
 environment:
@@ -16,6 +16,7 @@ dependencies:
   # Keep Google Play Billing 7.1.1 until the store pipeline supports the
   # Billing 8 API.
   in_app_purchase: 3.2.4
+  in_app_purchase_storekit: 0.4.11
   http: ^1.6.0
   webview_flutter: ^4.14.1
 

@@ -113,7 +113,7 @@ final class HostCommerceRepository extends ChangeNotifier {
     );
   }
 
-  /// Applies a backend-verified subscription exactly once per transaction.
+  /// Applies a store-confirmed subscription exactly once per transaction.
   Future<bool> recordVerifiedMembershipPurchase({
     required String transactionId,
     required DateTime membershipExpiresAt,
@@ -152,7 +152,7 @@ final class HostCommerceRepository extends ChangeNotifier {
     return true;
   }
 
-  /// Applies a backend-verified consumable exactly once per transaction.
+  /// Applies a store-confirmed consumable exactly once per transaction.
   Future<bool> recordVerifiedCreditPurchase({
     required String transactionId,
     required int credits,

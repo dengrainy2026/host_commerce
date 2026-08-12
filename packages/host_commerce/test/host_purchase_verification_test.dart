@@ -111,4 +111,62 @@ void main() {
       throwsA(isA<StateError>()),
     );
   });
+
+  test(
+    'no-receipt host verifier resolves an allowlisted subscription',
+    () async {
+      final NoReceiptHostPurchaseVerifier verifier =
+          NoReceiptHostPurchaseVerifier(
+            const HostProductCatalog(
+              weeklySubscriptionId: 'test.week',
+              yearlySubscriptionId: 'test.year',
+              creditProducts: <HostCreditProduct>[
+                HostCreditProduct(productId: 'test.1000', credits: 1000),
+              ],
+            ),
+            clock: () => DateTime.utc(2026, 1, 1),
+          );
+
+      final HostVerifiedPurchase purchase = await verifier.verify(
+        const HostPurchaseEvidence(
+          productId: 'test.week',
+          transactionId: 'store-transaction-1',
+          platform: 'app_store',
+          receipt: 'ignored-by-host-mode',
+          kind: HostPurchaseKind.subscription,
+          restored: false,
+        ),
+      );
+
+      expect(purchase.membershipExpiresAt, DateTime.utc(2026, 1, 8));
+    },
+  );
+
+  test('no-receipt host verifier still rejects a catalog mismatch', () async {
+    final NoReceiptHostPurchaseVerifier verifier =
+        NoReceiptHostPurchaseVerifier(
+          const HostProductCatalog(
+            weeklySubscriptionId: 'test.week',
+            yearlySubscriptionId: 'test.year',
+            creditProducts: <HostCreditProduct>[
+              HostCreditProduct(productId: 'test.1000', credits: 1000),
+            ],
+          ),
+        );
+
+    await expectLater(
+      verifier.verify(
+        const HostPurchaseEvidence(
+          productId: 'test.1000',
+          transactionId: 'store-transaction-2',
+          platform: 'app_store',
+          receipt: 'ignored-by-host-mode',
+          kind: HostPurchaseKind.credits,
+          restored: false,
+          expectedCredits: 4000,
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
 }

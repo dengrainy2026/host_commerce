@@ -27,14 +27,14 @@ final class HostPurchaseService {
     this._commerceRepository, {
     required HostProductCatalog catalog,
     HostInAppPurchaseClient? client,
-    HostPurchaseVerifier verifier = const RejectingHostPurchaseVerifier(),
+    HostPurchaseVerifier? verifier,
     HostVerifiedCommerceReporter reporter =
         const NoopHostVerifiedCommerceReporter(),
     StoreOperationCoordinator? operationCoordinator,
     this.restoreSettleDuration = const Duration(milliseconds: 500),
   }) : _catalog = catalog, // ignore: prefer_initializing_formals
        _client = client ?? PluginHostInAppPurchaseClient(),
-       _verifier = verifier, // ignore: prefer_initializing_formals
+       _verifier = verifier ?? NoReceiptHostPurchaseVerifier(catalog),
        _reporter = reporter, // ignore: prefer_initializing_formals
        _operationCoordinator =
            operationCoordinator ?? StoreOperationCoordinator();

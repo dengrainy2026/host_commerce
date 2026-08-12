@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../commerce_appearance.dart';
 import '../commerce_catalog.dart';
+import '../commerce_rules.dart';
 import '../host_purchase_service.dart';
 import '../host_store_product.dart';
 import 'commerce_legal_footer.dart';
@@ -12,6 +13,7 @@ final class MembershipSubscriptionScreen extends StatefulWidget {
   const MembershipSubscriptionScreen({
     required this.catalog,
     required this.appearance,
+    required this.rules,
     this.onLoadProducts,
     this.onSubscribe,
     this.onRestorePurchases,
@@ -20,6 +22,7 @@ final class MembershipSubscriptionScreen extends StatefulWidget {
 
   final HostProductCatalog catalog;
   final CommerceAppearance appearance;
+  final CommerceRules rules;
   final HostProductLoader? onLoadProducts;
   final Future<void> Function(MembershipPlan)? onSubscribe;
   final Future<void> Function()? onRestorePurchases;
@@ -120,11 +123,17 @@ class _MembershipSubscriptionScreenState
                         28,
                       ),
                       children: <Widget>[
-                        _SubscriptionHero(icons: widget.appearance.icons),
+                        _SubscriptionHero(
+                          icons: widget.appearance.icons,
+                          rules: widget.rules,
+                        ),
                         const SizedBox(height: 26),
                         const _CommerceLabel(label: 'MEMBER BENEFITS'),
                         const SizedBox(height: 10),
-                        _BenefitsCard(icons: widget.appearance.icons),
+                        _BenefitsCard(
+                          icons: widget.appearance.icons,
+                          rules: widget.rules,
+                        ),
                         const SizedBox(height: 26),
                         const _CommerceLabel(label: 'CHOOSE A PLAN'),
                         const SizedBox(height: 10),
@@ -282,9 +291,10 @@ class _MembershipSubscriptionScreenState
 }
 
 class _SubscriptionHero extends StatelessWidget {
-  const _SubscriptionHero({required this.icons});
+  const _SubscriptionHero({required this.icons, required this.rules});
 
   final CommerceIcons icons;
+  final CommerceRules rules;
 
   @override
   Widget build(BuildContext context) {
@@ -313,7 +323,8 @@ class _SubscriptionHero extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '1,000 credits every week and member access.',
+              '${_formatCreditAmount(rules.memberCreditsPerPeriod)} credits every '
+              '${_periodLabel(rules.membershipCreditPeriod)} and member access.',
               style: TextStyle(
                 color: colors.surface.withValues(alpha: 0.72),
                 fontSize: 13.5,
@@ -328,26 +339,59 @@ class _SubscriptionHero extends StatelessWidget {
 }
 
 class _BenefitsCard extends StatelessWidget {
-  const _BenefitsCard({required this.icons});
+  const _BenefitsCard({required this.icons, required this.rules});
 
   final CommerceIcons icons;
+  final CommerceRules rules;
 
   @override
   Widget build(BuildContext context) {
     return _CommerceCard(
       children: <Widget>[
-        _BenefitRow(icons: icons, icon: icons.credits, label: '1,000 credits every week'),
+        _BenefitRow(
+          icons: icons,
+          icon: icons.credits,
+          label:
+              '${_formatCreditAmount(rules.memberCreditsPerPeriod)} credits every '
+              '${_periodLabel(rules.membershipCreditPeriod)}',
+        ),
         const _CommerceDivider(),
         _BenefitRow(icons: icons, icon: icons.add, label: 'Buy extra credits'),
         const _CommerceDivider(),
         _BenefitRow(
           icons: icons,
           icon: icons.premium,
-          label: 'Each creation uses 100 credits',
+          label: 'Each creation uses ${rules.creationCost} credits',
         ),
       ],
     );
   }
+}
+
+String _periodLabel(Duration period) {
+  if (period.inDays > 0 && period == Duration(days: period.inDays)) {
+    if (period.inDays % 7 == 0) {
+      final int weeks = period.inDays ~/ 7;
+      return weeks == 1 ? 'week' : '$weeks weeks';
+    }
+    return period.inDays == 1 ? 'day' : '${period.inDays} days';
+  }
+  if (period.inHours > 0 && period == Duration(hours: period.inHours)) {
+    return period.inHours == 1 ? 'hour' : '${period.inHours} hours';
+  }
+  return '${period.inMinutes} minutes';
+}
+
+String _formatCreditAmount(int amount) {
+  final String digits = amount.toString();
+  final StringBuffer formatted = StringBuffer();
+  for (int index = 0; index < digits.length; index += 1) {
+    if (index > 0 && (digits.length - index) % 3 == 0) {
+      formatted.write(',');
+    }
+    formatted.write(digits[index]);
+  }
+  return formatted.toString();
 }
 
 class _BenefitRow extends StatelessWidget {
@@ -501,7 +545,9 @@ class _SelectionMark extends StatelessWidget {
           color: selected ? colors.onSurface : colors.outlineVariant,
         ),
       ),
-      child: selected ? Icon(icons.check, color: colors.surface, size: 15) : null,
+      child: selected
+          ? Icon(icons.check, color: colors.surface, size: 15)
+          : null,
     );
   }
 }

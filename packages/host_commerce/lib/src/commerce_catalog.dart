@@ -21,8 +21,8 @@ final class HostProductCatalog {
     required this.creditProducts,
     this.weeklyDuration = const Duration(days: 7),
     this.yearlyDuration = const Duration(days: 365),
-  // Rejects the canonical empty list under const evaluation; `length` is not
-  // const-evaluable, so the check compares against `const []` by identity.
+    // Rejects the canonical empty list under const evaluation; `length` is not
+    // const-evaluable, so the check compares against `const []` by identity.
   }) : assert(creditProducts != const <HostCreditProduct>[]);
 
   final String weeklySubscriptionId;
@@ -34,11 +34,14 @@ final class HostProductCatalog {
   final Duration weeklyDuration;
   final Duration yearlyDuration;
 
-  Set<String> get allSubscriptionIds =>
-      <String>{weeklySubscriptionId, yearlySubscriptionId};
+  Set<String> get allSubscriptionIds => <String>{
+    weeklySubscriptionId,
+    yearlySubscriptionId,
+  };
 
-  List<int> get availableCreditPackages =>
-      <int>[for (final HostCreditProduct product in creditProducts) product.credits];
+  List<int> get availableCreditPackages => <int>[
+    for (final HostCreditProduct product in creditProducts) product.credits,
+  ];
 
   Duration membershipDurationFor(String productId) {
     if (productId == weeklySubscriptionId) {
@@ -56,11 +59,16 @@ final class HostProductCatalog {
         return product.credits;
       }
     }
-    throw ArgumentError.value(productId, 'productId', 'Unknown credit product.');
+    throw ArgumentError.value(
+      productId,
+      'productId',
+      'Unknown credit product.',
+    );
   }
 
-  bool isCreditProduct(String productId) =>
-      creditProducts.any((HostCreditProduct product) => product.productId == productId);
+  bool isCreditProduct(String productId) => creditProducts.any(
+    (HostCreditProduct product) => product.productId == productId,
+  );
 
   String productIdForCredits(int credits) {
     for (final HostCreditProduct product in creditProducts) {

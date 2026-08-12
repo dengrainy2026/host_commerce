@@ -3,20 +3,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:host_commerce/host_commerce.dart';
 
+import 'app_config.dart';
 import 'settings_screen.dart';
 
 /// Host-only home screen.
 ///
-/// Demonstrates the credit gate: the placeholder tool consumes 100 credits
-/// per run and routes to the paywall (free users) or credit store (members)
-/// when the balance runs out. A new app replaces the placeholder tool with its
-/// own tools and keeps this gate around each creation.
+/// Demonstrates the configurable credit gate and routes to the paywall (free
+/// users) or credit store (members) when the balance runs out. A new app
+/// replaces the placeholder tool and can set its economy in [CommerceRules].
 final class HomeScreen extends StatefulWidget {
   const HomeScreen({
     required this.commerceRepository,
     required this.purchaseService,
     required this.appearance,
     required this.catalog,
+    required this.tool,
     super.key,
   });
 
@@ -24,6 +25,7 @@ final class HomeScreen extends StatefulWidget {
   final HostPurchaseService purchaseService;
   final CommerceAppearance appearance;
   final HostProductCatalog catalog;
+  final HomeToolConfig tool;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -56,13 +58,12 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     final HostCommerceState state = repository.state;
-    if (state.creditBalance < HostCommerceRepository.creationCost) {
+    final int creationCost = repository.rules.creationCost;
+    if (state.creditBalance < creationCost) {
       await _openCommerceEntry();
       return;
     }
-    final bool consumed = await repository.consumeCredits(
-      HostCommerceRepository.creationCost,
-    );
+    final bool consumed = await repository.consumeCredits(creationCost);
     if (!mounted) {
       return;
     }
@@ -73,7 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
           behavior: SnackBarBehavior.floating,
           content: Text(
             consumed
-                ? 'Tool ran — ${HostCommerceRepository.creationCost} credits used.'
+                ? 'Tool ran — $creationCost credits used.'
                 : 'Not enough credits.',
           ),
         ),
@@ -114,6 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (BuildContext context) => MembershipSubscriptionScreen(
           catalog: widget.catalog,
           appearance: widget.appearance,
+          rules: widget.commerceRepository.rules,
           onLoadProducts: widget.purchaseService.loadProducts,
           onSubscribe: _purchaseSubscription,
           onRestorePurchases: widget.purchaseService.restorePurchases,
@@ -190,7 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              'YOUR TOOL',
+              widget.tool.sectionLabel,
               style: TextStyle(
                 color: colors.onSurfaceVariant,
                 fontSize: 11,
@@ -200,10 +202,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 10),
             _ToolCard(
-              icon: Icons.auto_fix_high,
-              title: 'Sample tool',
-              subtitle: 'Each creation uses '
-                  '${HostCommerceRepository.creationCost} credits.',
+              icon: widget.tool.icon,
+              title: widget.tool.title,
+              subtitle:
+                  'Each creation uses '
+                  '${widget.commerceRepository.rules.creationCost} credits.',
               onTap: () => unawaited(_runTool()),
             ),
           ],

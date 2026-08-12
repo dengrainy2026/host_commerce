@@ -178,6 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (BuildContext context) => MembershipSubscriptionScreen(
           catalog: widget.catalog,
           appearance: widget.appearance,
+          rules: widget.commerceRepository.rules,
           onLoadProducts: widget.purchaseService.loadProducts,
           onSubscribe: _purchaseSubscription,
           onRestorePurchases: widget.purchaseService.restorePurchases,
@@ -219,7 +220,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           behavior: SnackBarBehavior.floating,
           content: Text(
             redeemed
-                ? '2,000 credits were added.'
+                ? '${widget.commerceRepository.rules.redemptionCredits} credits were added.'
                 : 'The redemption code is invalid.',
           ),
         ),

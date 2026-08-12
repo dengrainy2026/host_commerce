@@ -9,21 +9,21 @@ import 'package:veditor_commerce/main.dart';
 
 void main() {
   test('product catalog resolves by platform and release mode', () {
-    final HostProductCatalog android = buildCatalogFor(
+    final HostProductCatalog android = kAppConfig.catalogFor(
       platform: TargetPlatform.android,
       releaseMode: true,
     );
     expect(android.weeklySubscriptionId, 'com.vedtr.sub.week');
     expect(android.availableCreditPackages, <int>[300, 500, 1000, 2000]);
 
-    final HostProductCatalog iosRelease = buildCatalogFor(
+    final HostProductCatalog iosRelease = kAppConfig.catalogFor(
       platform: TargetPlatform.iOS,
       releaseMode: true,
     );
     expect(iosRelease.weeklySubscriptionId, 'week.clpfy.base');
     expect(iosRelease.availableCreditPackages, <int>[500, 1000]);
 
-    final HostProductCatalog iosDebug = buildCatalogFor(
+    final HostProductCatalog iosDebug = kAppConfig.catalogFor(
       platform: TargetPlatform.iOS,
       releaseMode: false,
     );
@@ -36,13 +36,14 @@ void main() {
     (WidgetTester tester) async {
       final HostCommerceRepository repository = HostCommerceRepository(
         MemoryHostCommerceStore(),
+        rules: kAppConfig.commerceRules,
         scheduleBoundaryTimers: false,
       );
       await repository.initialize();
       final _FakePurchaseClient client = _FakePurchaseClient();
       final HostPurchaseService service = HostPurchaseService(
         repository,
-        catalog: buildCatalogFor(
+        catalog: kAppConfig.catalogFor(
           platform: TargetPlatform.android,
           releaseMode: true,
         ),
@@ -55,10 +56,10 @@ void main() {
 
       await tester.pumpWidget(
         VeditorCommerceApp(
+          config: kAppConfig,
           commerceRepository: repository,
           purchaseService: service,
-          appearance: buildAppearance(),
-          catalog: buildCatalogFor(
+          catalog: kAppConfig.catalogFor(
             platform: TargetPlatform.android,
             releaseMode: true,
           ),
@@ -96,6 +97,7 @@ void main() {
             membershipCreditPeriodStartedAt: now,
           ),
         ),
+        rules: kAppConfig.commerceRules,
         clock: () => now,
         scheduleBoundaryTimers: false,
       );
@@ -103,7 +105,7 @@ void main() {
       final _FakePurchaseClient client = _FakePurchaseClient();
       final HostPurchaseService service = HostPurchaseService(
         repository,
-        catalog: buildCatalogFor(
+        catalog: kAppConfig.catalogFor(
           platform: TargetPlatform.android,
           releaseMode: true,
         ),
@@ -116,10 +118,10 @@ void main() {
 
       await tester.pumpWidget(
         VeditorCommerceApp(
+          config: kAppConfig,
           commerceRepository: repository,
           purchaseService: service,
-          appearance: buildAppearance(),
-          catalog: buildCatalogFor(
+          catalog: kAppConfig.catalogFor(
             platform: TargetPlatform.android,
             releaseMode: true,
           ),

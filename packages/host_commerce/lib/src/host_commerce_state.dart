@@ -7,6 +7,7 @@ final class HostCommerceState {
     this.membershipExpiresAt,
     this.membershipCreditPeriodStartedAt,
     this.hasRedeemedCode = false,
+    this.processedPurchaseIds = const <String>{},
   }) : assert(permanentCredits >= 0),
        assert(membershipCredits >= 0);
 
@@ -25,10 +26,14 @@ final class HostCommerceState {
   /// explicitly cleared from the settings screen.
   final bool hasRedeemedCode;
 
+  /// Store transaction identifiers whose verified grants were already
+  /// applied. Persisting these identifiers makes redelivery idempotent.
+  final Set<String> processedPurchaseIds;
+
   int get creditBalance => permanentCredits + membershipCredits;
 
   Map<String, Object?> toJson() => <String, Object?>{
-    'schema_version': 3,
+    'schema_version': 4,
     'is_member': isMember,
     'permanent_credits': permanentCredits,
     'membership_credits': membershipCredits,
@@ -36,6 +41,7 @@ final class HostCommerceState {
     'membership_credit_period_started_at':
         membershipCreditPeriodStartedAt?.millisecondsSinceEpoch,
     'has_redeemed_code': hasRedeemedCode,
+    'processed_purchase_ids': processedPurchaseIds.toList()..sort(),
   };
 
   static HostCommerceState fromJson(Map<String, Object?> json) {
@@ -46,13 +52,24 @@ final class HostCommerceState {
     final Object? permanentCredits = json['permanent_credits'];
     final Object? membershipCredits = json['membership_credits'];
     final Object? hasRedeemedCode = json['has_redeemed_code'];
+    final Object? processedPurchaseIds = json['processed_purchase_ids'];
     if (isMember is! bool ||
         permanentCredits is! int ||
         permanentCredits < 0 ||
         membershipCredits is! int ||
         membershipCredits < 0 ||
-        hasRedeemedCode != null && hasRedeemedCode is! bool) {
+        hasRedeemedCode != null && hasRedeemedCode is! bool ||
+        processedPurchaseIds != null && processedPurchaseIds is! List) {
       throw const FormatException('Invalid host commerce state.');
+    }
+    final List<Object?> rawPurchaseIds = processedPurchaseIds is List
+        ? List<Object?>.from(processedPurchaseIds)
+        : const <Object?>[];
+    final Set<String> purchaseIds = rawPurchaseIds.whereType<String>().toSet();
+    if (processedPurchaseIds is List &&
+        (purchaseIds.length != rawPurchaseIds.length ||
+            purchaseIds.any((String id) => id.trim().isEmpty))) {
+      throw const FormatException('Invalid processed purchase identifiers.');
     }
     return HostCommerceState(
       isMember: isMember,
@@ -63,6 +80,7 @@ final class HostCommerceState {
         json['membership_credit_period_started_at'],
       ),
       hasRedeemedCode: hasRedeemedCode as bool? ?? false,
+      processedPurchaseIds: purchaseIds,
     );
   }
 
@@ -72,7 +90,10 @@ final class HostCommerceState {
     if (isMember is! bool || creditBalance is! int || creditBalance < 0) {
       throw const FormatException('Invalid legacy host commerce state.');
     }
-    return HostCommerceState(isMember: isMember, permanentCredits: creditBalance);
+    return HostCommerceState(
+      isMember: isMember,
+      permanentCredits: creditBalance,
+    );
   }
 
   static DateTime? _dateTimeFromJson(Object? value) {

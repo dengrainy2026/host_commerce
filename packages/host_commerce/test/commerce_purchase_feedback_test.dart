@@ -8,6 +8,40 @@ import 'src/test_catalog.dart';
 
 void main() {
   testWidgets(
+    'membership page always exposes clickable privacy and terms actions',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: MembershipSubscriptionScreen(
+            catalog: testCatalog,
+            appearance: testAppearance,
+            rules: CommerceRules(),
+          ),
+        ),
+      );
+
+      await _expectRequiredLegalActions(tester);
+    },
+  );
+
+  testWidgets(
+    'credit purchase page always exposes clickable privacy and terms actions',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: CreditPurchaseScreen(
+            catalog: testCatalog,
+            appearance: testAppearance,
+            balance: 100,
+          ),
+        ),
+      );
+
+      await _expectRequiredLegalActions(tester);
+    },
+  );
+
+  testWidgets(
     'membership purchase shows HUD then exits with success feedback',
     (WidgetTester tester) async {
       final Completer<void> purchase = Completer<void>();
@@ -213,6 +247,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('324'), findsOneWidget);
   });
+}
+
+Future<void> _expectRequiredLegalActions(WidgetTester tester) async {
+  await tester.drag(find.byType(Scrollable), const Offset(0, -2000));
+  await tester.pumpAndSettle();
+  final TextButton privacy = tester.widget<TextButton>(
+    find.byKey(const ValueKey<String>('commerce-privacy-policy')),
+  );
+  final TextButton terms = tester.widget<TextButton>(
+    find.byKey(const ValueKey<String>('commerce-terms-of-use')),
+  );
+  expect(find.text('Privacy Policy'), findsOneWidget);
+  expect(find.text('Terms of Use'), findsOneWidget);
+  expect(privacy.onPressed, isNotNull);
+  expect(terms.onPressed, isNotNull);
 }
 
 Future<Map<String, HostStoreProduct>> _loadStoreProducts(

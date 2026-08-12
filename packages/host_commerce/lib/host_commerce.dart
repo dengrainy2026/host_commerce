@@ -11,11 +11,14 @@ library;
 
 export 'src/commerce_appearance.dart';
 export 'src/commerce_catalog.dart';
+export 'src/commerce_rules.dart';
 export 'src/host_commerce_repository.dart';
 export 'src/host_commerce_state.dart';
 export 'src/host_commerce_store.dart';
+export 'src/host_credit_gate.dart';
 export 'src/host_in_app_purchase_client.dart';
 export 'src/host_purchase_service.dart';
+export 'src/host_purchase_verification.dart';
 export 'src/host_store_product.dart';
 export 'src/permanent_host_mode.dart';
 export 'src/store_operation_coordinator.dart';

@@ -3,7 +3,8 @@ abstract interface class PermanentHostModeChecking {
   Future<bool> isPermanentHostModeEnabled();
 }
 
-final class MemoryPermanentHostModeChecker implements PermanentHostModeChecking {
+final class MemoryPermanentHostModeChecker
+    implements PermanentHostModeChecking {
   MemoryPermanentHostModeChecker({this.enabled = false});
 
   bool enabled;

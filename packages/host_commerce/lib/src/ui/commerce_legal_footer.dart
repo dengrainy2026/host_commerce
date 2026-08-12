@@ -20,26 +20,22 @@ final class CommerceLegalFooter extends StatelessWidget {
       if (privacyUrl != null)
         TextButton(
           key: const ValueKey<String>('commerce-privacy-policy'),
-          onPressed: () => _openLegalPage(
-            context,
-            title: 'Privacy Policy',
-            url: privacyUrl,
-          ),
+          onPressed: () =>
+              _openLegalPage(context, title: 'Privacy Policy', url: privacyUrl),
           child: const Text('Privacy Policy'),
         ),
       if (privacyUrl != null && termsUrl != null)
         Text(
           '·',
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       if (termsUrl != null)
         TextButton(
           key: const ValueKey<String>('commerce-terms-of-use'),
-          onPressed: () => _openLegalPage(
-            context,
-            title: 'Terms of Use',
-            url: termsUrl,
-          ),
+          onPressed: () =>
+              _openLegalPage(context, title: 'Terms of Use', url: termsUrl),
           child: const Text('Terms of Use'),
         ),
     ];

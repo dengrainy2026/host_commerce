@@ -7,6 +7,7 @@ import 'host_commerce_repository.dart';
 import 'host_commerce_state.dart';
 import 'host_in_app_purchase_client.dart';
 import 'host_store_product.dart';
+import 'host_purchase_verification.dart';
 import 'store_operation_coordinator.dart';
 
 final class HostPurchaseCanceledException implements Exception {
@@ -26,22 +27,31 @@ final class HostPurchaseService {
     this._commerceRepository, {
     required HostProductCatalog catalog,
     HostInAppPurchaseClient? client,
+    HostPurchaseVerifier verifier = const RejectingHostPurchaseVerifier(),
+    HostVerifiedCommerceReporter reporter =
+        const NoopHostVerifiedCommerceReporter(),
     StoreOperationCoordinator? operationCoordinator,
     this.restoreSettleDuration = const Duration(milliseconds: 500),
   }) : _catalog = catalog, // ignore: prefer_initializing_formals
        _client = client ?? PluginHostInAppPurchaseClient(),
-       _operationCoordinator = operationCoordinator ?? StoreOperationCoordinator();
+       _verifier = verifier, // ignore: prefer_initializing_formals
+       _reporter = reporter, // ignore: prefer_initializing_formals
+       _operationCoordinator =
+           operationCoordinator ?? StoreOperationCoordinator();
 
   final HostCommerceRepository _commerceRepository;
   final HostProductCatalog _catalog;
   final HostInAppPurchaseClient _client;
+  final HostPurchaseVerifier _verifier;
+  final HostVerifiedCommerceReporter _reporter;
   final StoreOperationCoordinator _operationCoordinator;
   final Duration restoreSettleDuration;
   StreamSubscription<List<PurchaseDetails>>? _subscription;
   Future<void> _processingTail = Future<void>.value();
   _HostPurchaseOperation? _activePurchase;
   _HostRestoreOperation? _activeRestore;
-  final Map<String, ProductDetails> _productDetails = <String, ProductDetails>{};
+  final Map<String, ProductDetails> _productDetails =
+      <String, ProductDetails>{};
 
   HostCommerceState get commerceState => _commerceRepository.state;
 
@@ -85,7 +95,11 @@ final class HostPurchaseService {
 
   Future<void> purchaseSubscription(String productId) async {
     if (!_catalog.allSubscriptionIds.contains(productId)) {
-      throw ArgumentError.value(productId, 'productId', 'Unknown subscription.');
+      throw ArgumentError.value(
+        productId,
+        'productId',
+        'Unknown subscription.',
+      );
     }
     await _operationCoordinator.run(
       StoreOperationOwner.host,
@@ -111,7 +125,10 @@ final class HostPurchaseService {
     await _operationCoordinator.run(
       StoreOperationOwner.host,
       () => _startPurchase(
-        _HostPurchaseOperation.credits(productId, _catalog.creditsFor(productId)),
+        _HostPurchaseOperation.credits(
+          productId,
+          _catalog.creditsFor(productId),
+        ),
         consumable: true,
       ),
     );
@@ -137,7 +154,9 @@ final class HostPurchaseService {
 
     _activePurchase = operation;
     try {
-      final PurchaseParam purchaseParam = PurchaseParam(productDetails: details);
+      final PurchaseParam purchaseParam = PurchaseParam(
+        productDetails: details,
+      );
       final bool started = consumable
           ? await _client.buyConsumable(purchaseParam: purchaseParam)
           : await _client.buyNonConsumable(purchaseParam: purchaseParam);
@@ -182,7 +201,8 @@ final class HostPurchaseService {
   Future<void> _processPurchaseUpdates(List<PurchaseDetails> purchases) async {
     for (final PurchaseDetails purchase in purchases) {
       final _HostPurchaseOperation? activePurchase = _activePurchase;
-      if (activePurchase != null && _belongsToActivePurchase(activePurchase, purchase)) {
+      if (activePurchase != null &&
+          _belongsToActivePurchase(activePurchase, purchase)) {
         await _processActivePurchase(activePurchase, purchase);
         continue;
       }
@@ -240,11 +260,17 @@ final class HostPurchaseService {
       case PurchaseStatus.purchased:
       case PurchaseStatus.restored:
         try {
-          if (operation.credits case final int credits) {
-            await _commerceRepository.recordCreditPurchase(credits);
-          } else {
-            await _commerceRepository.recordMembershipPurchase(
-              membershipDuration: _catalog.membershipDurationFor(operation.productId),
+          final HostVerifiedPurchase verified = await _verifyPurchase(
+            purchase,
+            operation: operation,
+            restored: purchase.status == PurchaseStatus.restored,
+          );
+          final bool applied = await _applyVerifiedPurchase(verified);
+          if (applied) {
+            await _reportVerifiedPurchase(
+              verified,
+              restored: purchase.status == PurchaseStatus.restored,
+              storePurchase: purchase,
             );
           }
           if (purchase.pendingCompletePurchase) {
@@ -295,9 +321,19 @@ final class HostPurchaseService {
     }
     try {
       if (_catalog.allSubscriptionIds.contains(purchase.productID)) {
-        await _commerceRepository.recordMembershipPurchase(
-          membershipDuration: _catalog.membershipDurationFor(purchase.productID),
+        final HostVerifiedPurchase verified = await _verifyPurchase(
+          purchase,
+          operation: _HostPurchaseOperation.subscription(purchase.productID),
+          restored: true,
         );
+        final bool applied = await _applyVerifiedPurchase(verified);
+        if (applied) {
+          await _reportVerifiedPurchase(
+            verified,
+            restored: true,
+            storePurchase: purchase,
+          );
+        }
         if (purchase.pendingCompletePurchase) {
           await _client.completePurchase(purchase);
         }
@@ -308,6 +344,78 @@ final class HostPurchaseService {
     } catch (error, stackTrace) {
       operation.settleTimer?.cancel();
       operation.completed.completeError(error, stackTrace);
+    }
+  }
+
+  Future<HostVerifiedPurchase> _verifyPurchase(
+    PurchaseDetails purchase, {
+    required _HostPurchaseOperation operation,
+    required bool restored,
+  }) async {
+    final String transactionId = purchase.purchaseID?.trim() ?? '';
+    if (transactionId.isEmpty) {
+      throw StateError('The store did not provide a transaction identifier.');
+    }
+    final HostPurchaseKind kind = operation.credits == null
+        ? HostPurchaseKind.subscription
+        : HostPurchaseKind.credits;
+    final HostPurchaseEvidence evidence = HostPurchaseEvidence(
+      productId: operation.productId,
+      transactionId: transactionId,
+      platform: purchase.verificationData.source,
+      receipt: purchase.verificationData.serverVerificationData,
+      kind: kind,
+      restored: restored,
+      expectedCredits: operation.credits,
+    );
+    final HostVerifiedPurchase verified = await _verifier.verify(evidence);
+    if (verified.productId != evidence.productId ||
+        verified.transactionId != evidence.transactionId ||
+        verified.kind != evidence.kind) {
+      throw StateError(
+        'Verified purchase does not match the store transaction.',
+      );
+    }
+    if (kind == HostPurchaseKind.credits &&
+        verified.creditsGranted != operation.credits) {
+      throw StateError('Verified credit grant does not match the catalog.');
+    }
+    if (kind == HostPurchaseKind.subscription &&
+        verified.membershipExpiresAt == null) {
+      throw StateError('Verified membership expiration is missing.');
+    }
+    return verified;
+  }
+
+  Future<bool> _applyVerifiedPurchase(HostVerifiedPurchase purchase) {
+    return switch (purchase.kind) {
+      HostPurchaseKind.credits =>
+        _commerceRepository.recordVerifiedCreditPurchase(
+          transactionId: purchase.transactionId,
+          credits: purchase.creditsGranted!,
+        ),
+      HostPurchaseKind.subscription =>
+        _commerceRepository.recordVerifiedMembershipPurchase(
+          transactionId: purchase.transactionId,
+          membershipExpiresAt: purchase.membershipExpiresAt!,
+        ),
+    };
+  }
+
+  Future<void> _reportVerifiedPurchase(
+    HostVerifiedPurchase purchase, {
+    required bool restored,
+    required PurchaseDetails storePurchase,
+  }) async {
+    try {
+      await _reporter.report(
+        purchase,
+        restored: restored,
+        storePurchase: storePurchase,
+        storeProduct: _productDetails[purchase.productId],
+      );
+    } on Object {
+      // Analytics must never strand a verified and persisted transaction.
     }
   }
 

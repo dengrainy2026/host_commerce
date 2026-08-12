@@ -24,6 +24,5 @@ final class HostStoreProduct {
   }
 }
 
-typedef HostProductLoader = Future<Map<String, HostStoreProduct>> Function(
-  Set<String> productIds,
-);
+typedef HostProductLoader =
+    Future<Map<String, HostStoreProduct>> Function(Set<String> productIds);

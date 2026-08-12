@@ -88,14 +88,8 @@ void main() {
       ],
     );
 
-    expect(
-      catalog.subscriptionIdFor(MembershipPlan.weekly),
-      'week.test.base',
-    );
-    expect(
-      catalog.subscriptionIdFor(MembershipPlan.annual),
-      'year.test.base',
-    );
+    expect(catalog.subscriptionIdFor(MembershipPlan.weekly), 'week.test.base');
+    expect(catalog.subscriptionIdFor(MembershipPlan.annual), 'year.test.base');
   });
 
   test('the first credit package is the default selection', () {

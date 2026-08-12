@@ -26,7 +26,7 @@ final class HostCommerceState {
   /// explicitly cleared from the settings screen.
   final bool hasRedeemedCode;
 
-  /// Store transaction identifiers whose verified grants were already
+  /// Store transaction identifiers whose grants were already
   /// applied. Persisting these identifiers makes redelivery idempotent.
   final Set<String> processedPurchaseIds;
 

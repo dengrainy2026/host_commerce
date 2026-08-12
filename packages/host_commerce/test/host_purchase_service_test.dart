@@ -32,7 +32,7 @@ void main() {
   });
 
   test(
-    'successful verified host purchase stores membership before finishing',
+    'real store success grants host membership without receipt verification',
     () async {
       final HostCommerceRepository commerceRepository = HostCommerceRepository(
         MemoryHostCommerceStore(),
@@ -44,7 +44,6 @@ void main() {
         commerceRepository,
         catalog: testCatalog,
         client: client,
-        verifier: _AcceptingVerifier(testCatalog),
       )..initialize();
 
       final Future<void> purchase = service.purchaseSubscription(

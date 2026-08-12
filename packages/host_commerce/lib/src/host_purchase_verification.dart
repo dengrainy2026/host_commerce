@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:in_app_purchase/in_app_purchase.dart';
 
+import 'commerce_catalog.dart';
+
 enum HostPurchaseKind { subscription, credits }
 
 /// Receipt/token evidence sent to an app-owned verification backend.
@@ -50,7 +52,7 @@ abstract interface class HostPurchaseVerifier {
   Future<HostVerifiedPurchase> verify(HostPurchaseEvidence evidence);
 }
 
-/// Safe default used when a host has not supplied production verification.
+/// Explicit fail-closed verifier for products that require external validation.
 final class RejectingHostPurchaseVerifier implements HostPurchaseVerifier {
   const RejectingHostPurchaseVerifier();
 
@@ -59,6 +61,50 @@ final class RejectingHostPurchaseVerifier implements HostPurchaseVerifier {
     return Future<HostVerifiedPurchase>.error(
       StateError('Native purchase verification is not configured.'),
     );
+  }
+}
+
+/// Resolves a real store transaction without validating its receipt/token.
+///
+/// Native Host Mode deliberately trusts only `purchased`/`restored` updates
+/// delivered by the platform purchase stream. Product IDs and grants still
+/// come from the app-owned allowlisted catalog, and transaction IDs remain
+/// required so grants are idempotent. No verification API is called.
+final class NoReceiptHostPurchaseVerifier implements HostPurchaseVerifier {
+  NoReceiptHostPurchaseVerifier(this.catalog, {DateTime Function()? clock})
+    : _clock = clock ?? DateTime.now;
+
+  final HostProductCatalog catalog;
+  final DateTime Function() _clock;
+
+  @override
+  Future<HostVerifiedPurchase> verify(HostPurchaseEvidence evidence) async {
+    final String transactionId = evidence.transactionId.trim();
+    if (transactionId.isEmpty) {
+      throw StateError('The store did not provide a transaction identifier.');
+    }
+    switch (evidence.kind) {
+      case HostPurchaseKind.subscription:
+        return HostVerifiedPurchase(
+          productId: evidence.productId,
+          transactionId: transactionId,
+          kind: evidence.kind,
+          membershipExpiresAt: _clock().toUtc().add(
+            catalog.membershipDurationFor(evidence.productId),
+          ),
+        );
+      case HostPurchaseKind.credits:
+        final int credits = catalog.creditsFor(evidence.productId);
+        if (evidence.expectedCredits != credits) {
+          throw StateError('The credit grant does not match the catalog.');
+        }
+        return HostVerifiedPurchase(
+          productId: evidence.productId,
+          transactionId: transactionId,
+          kind: evidence.kind,
+          creditsGranted: credits,
+        );
+    }
   }
 }
 

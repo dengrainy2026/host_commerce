@@ -152,6 +152,10 @@ final class HostPurchaseService {
       throw StateError('The product is unavailable.');
     }
 
+    if (await _recoverPendingPurchases(operation)) {
+      return;
+    }
+
     _activePurchase = operation;
     try {
       final PurchaseParam purchaseParam = PurchaseParam(
@@ -170,6 +174,62 @@ final class HostPurchaseService {
         _activePurchase = null;
       }
     }
+  }
+
+  Future<bool> _recoverPendingPurchases(
+    _HostPurchaseOperation operation,
+  ) async {
+    if (_client is! HostPendingPurchaseClient) {
+      return false;
+    }
+    final HostPendingPurchaseClient recoveryClient =
+        _client as HostPendingPurchaseClient;
+    final List<PurchaseDetails> pending = await recoveryClient
+        .pendingPurchasesFor(operation.productId);
+    bool recoveredSuccess = false;
+    bool stillPending = false;
+    for (final PurchaseDetails purchase in pending) {
+      switch (purchase.status) {
+        case PurchaseStatus.pending:
+          stillPending = true;
+          continue;
+        case PurchaseStatus.canceled:
+        case PurchaseStatus.error:
+          if (purchase.pendingCompletePurchase) {
+            await _client.completePurchase(purchase);
+          }
+          continue;
+        case PurchaseStatus.purchased:
+        case PurchaseStatus.restored:
+          final bool restored = purchase.status == PurchaseStatus.restored;
+          final HostVerifiedPurchase verified = await _verifyPurchase(
+            purchase,
+            operation: operation,
+            restored: restored,
+          );
+          final bool applied = await _applyVerifiedPurchase(verified);
+          if (applied) {
+            await _reportVerifiedPurchase(
+              verified,
+              restored: restored,
+              storePurchase: purchase,
+            );
+          }
+          if (purchase.pendingCompletePurchase) {
+            await _client.completePurchase(purchase);
+          }
+          recoveredSuccess = true;
+      }
+    }
+    if (recoveredSuccess) {
+      return true;
+    }
+    if (stillPending) {
+      throw StateError(
+        'A purchase for ${operation.productId} is still pending in the App Store.',
+      );
+    }
+    return false;
   }
 
   Future<void> restorePurchases() =>

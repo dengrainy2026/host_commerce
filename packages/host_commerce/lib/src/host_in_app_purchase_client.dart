@@ -1,4 +1,19 @@
+import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:in_app_purchase_storekit/in_app_purchase_storekit.dart';
+import 'package:in_app_purchase_storekit/store_kit_wrappers.dart';
+
+/// Selects StoreKit 1 on iOS so stale queued transactions can be recovered
+/// before another payment for the same product is submitted.
+Future<void> initializeHostCommerceStoreKit() async {
+  if (defaultTargetPlatform != TargetPlatform.iOS) {
+    return;
+  }
+  // StoreKit 1 exposes the payment queue used by the recovery path below.
+  // ignore: deprecated_member_use
+  await InAppPurchaseStoreKitPlatform.enableStoreKit1();
+  InAppPurchaseStoreKitPlatform.registerPlatform();
+}
 
 /// Thin boundary around the store platform plugin so purchase flow can be
 /// faked in tests.
@@ -18,7 +33,16 @@ abstract interface class HostInAppPurchaseClient {
   Future<void> completePurchase(PurchaseDetails purchase);
 }
 
-final class PluginHostInAppPurchaseClient implements HostInAppPurchaseClient {
+/// Optional iOS recovery surface implemented by the production store client.
+///
+/// Keeping it separate preserves compatibility with injected clients that do
+/// not need platform pending-transaction recovery.
+abstract interface class HostPendingPurchaseClient {
+  Future<List<PurchaseDetails>> pendingPurchasesFor(String productId);
+}
+
+final class PluginHostInAppPurchaseClient
+    implements HostInAppPurchaseClient, HostPendingPurchaseClient {
   PluginHostInAppPurchaseClient({InAppPurchase? plugin})
     : _plugin = plugin ?? InAppPurchase.instance;
 
@@ -48,4 +72,23 @@ final class PluginHostInAppPurchaseClient implements HostInAppPurchaseClient {
   @override
   Future<void> completePurchase(PurchaseDetails purchase) =>
       _plugin.completePurchase(purchase);
+
+  @override
+  Future<List<PurchaseDetails>> pendingPurchasesFor(String productId) async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return const <PurchaseDetails>[];
+    }
+    final List<SKPaymentTransactionWrapper> transactions =
+        await SKPaymentQueueWrapper().transactions();
+    return transactions
+        .where(
+          (SKPaymentTransactionWrapper transaction) =>
+              transaction.payment.productIdentifier == productId,
+        )
+        .map(
+          (SKPaymentTransactionWrapper transaction) =>
+              AppStorePurchaseDetails.fromSKTransaction(transaction, ''),
+        )
+        .toList(growable: false);
+  }
 }

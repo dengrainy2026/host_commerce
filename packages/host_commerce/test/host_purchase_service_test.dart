@@ -64,6 +64,130 @@ void main() {
   );
 
   test(
+    'recovers and finishes an unfinished subscription before a duplicate buy',
+    () async {
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(),
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final _FakePurchaseClient client = _FakePurchaseClient()
+        ..pendingPurchases = <PurchaseDetails>[
+          _purchase(
+            testCatalog.yearlySubscriptionId,
+            PurchaseStatus.purchased,
+            purchaseId: 'unfinished-test-year',
+          ),
+        ];
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+      )..initialize();
+
+      await service.purchaseSubscription(testCatalog.yearlySubscriptionId);
+
+      expect(commerceRepository.state.isMember, isTrue);
+      expect(
+        commerceRepository.state.processedPurchaseIds,
+        contains('unfinished-test-year'),
+      );
+      expect(client.nonConsumablePurchases, 0);
+      expect(client.completedPurchases, 1);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test(
+    'duplicate unfinished consumable delivery grants credits once',
+    () async {
+      final DateTime now = DateTime.utc(2026, 1, 1);
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(
+          HostCommerceState(
+            isMember: true,
+            membershipExpiresAt: now.add(const Duration(days: 30)),
+            membershipCreditPeriodStartedAt: now,
+          ),
+        ),
+        clock: () => now,
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final String productId = testCatalog.productIdForCredits(300);
+      final _FakePurchaseClient client = _FakePurchaseClient()
+        ..pendingPurchases = <PurchaseDetails>[
+          _purchase(
+            productId,
+            PurchaseStatus.purchased,
+            purchaseId: 'unfinished-credit-300',
+          ),
+          _purchase(
+            productId,
+            PurchaseStatus.purchased,
+            purchaseId: 'unfinished-credit-300',
+          ),
+        ];
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+      )..initialize();
+
+      await service.purchaseCredits(productId);
+
+    expect(commerceRepository.state.permanentCredits, 400);
+      expect(client.consumablePurchases, 0);
+      expect(client.completedPurchases, 2);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test(
+    'does not finish or duplicate a transaction that is still pending',
+    () async {
+      final HostCommerceRepository commerceRepository = HostCommerceRepository(
+        MemoryHostCommerceStore(),
+        scheduleBoundaryTimers: false,
+      );
+      await commerceRepository.initialize();
+      final _FakePurchaseClient client = _FakePurchaseClient()
+        ..pendingPurchases = <PurchaseDetails>[
+          _purchase(
+            testCatalog.yearlySubscriptionId,
+            PurchaseStatus.pending,
+            pendingCompletePurchase: false,
+            purchaseId: 'pending-test-year',
+          ),
+        ];
+      final HostPurchaseService service = HostPurchaseService(
+        commerceRepository,
+        catalog: testCatalog,
+        client: client,
+      )..initialize();
+
+      await expectLater(
+        service.purchaseSubscription(testCatalog.yearlySubscriptionId),
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message,
+            'message',
+            contains('still pending in the App Store'),
+          ),
+        ),
+      );
+
+      expect(commerceRepository.state.isMember, isFalse);
+      expect(client.nonConsumablePurchases, 0);
+      expect(client.completedPurchases, 0);
+      await service.dispose();
+      await client.dispose();
+    },
+  );
+
+  test(
     'empty-product Android cancellation ends the active host purchase',
     () async {
       final HostCommerceRepository commerceRepository = HostCommerceRepository(
@@ -471,9 +595,10 @@ PurchaseDetails _purchase(
   String productId,
   PurchaseStatus status, {
   bool pendingCompletePurchase = true,
+  String purchaseId = 'purchase-id',
 }) {
   final PurchaseDetails purchase = PurchaseDetails(
-    purchaseID: 'purchase-id',
+    purchaseID: purchaseId,
     productID: productId,
     verificationData: PurchaseVerificationData(
       localVerificationData: 'not-verified',
@@ -487,12 +612,14 @@ PurchaseDetails _purchase(
   return purchase;
 }
 
-final class _FakePurchaseClient implements HostInAppPurchaseClient {
+final class _FakePurchaseClient
+    implements HostInAppPurchaseClient, HostPendingPurchaseClient {
   final StreamController<List<PurchaseDetails>> _controller =
       StreamController<List<PurchaseDetails>>.broadcast();
   int completedPurchases = 0;
   int consumablePurchases = 0;
   int nonConsumablePurchases = 0;
+  List<PurchaseDetails> pendingPurchases = <PurchaseDetails>[];
 
   @override
   Stream<List<PurchaseDetails>> get purchaseStream => _controller.stream;
@@ -502,6 +629,12 @@ final class _FakePurchaseClient implements HostInAppPurchaseClient {
 
   void emitError(Object error) =>
       _controller.addError(error, StackTrace.current);
+
+  @override
+  Future<List<PurchaseDetails>> pendingPurchasesFor(String productId) async =>
+      pendingPurchases
+          .where((PurchaseDetails purchase) => purchase.productID == productId)
+          .toList(growable: false);
 
   @override
   Future<bool> isAvailable() async => true;

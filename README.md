@@ -13,7 +13,8 @@ gate (`HomeScreen._runTool`) around each creation.
   `kAppConfig` object for a new app**: branding, legal URLs, theme color, home
   tool presentation, credit/membership rules, and StoreKit / Play product IDs.
 - `lib/main.dart` — wires `HostCommerceRepository` + `HostPurchaseService` and
-  runs the app.
+  initializes StoreKit recovery before wiring the commerce services and running
+  the app.
 - `lib/home_screen.dart` — placeholder tool with the credit gate demo.
 - `lib/settings_screen.dart` — minimal settings reusing the package's
   `CreditsStatusCard`, `RedeemCodeDialog`, and `CommerceLegalFooter`.

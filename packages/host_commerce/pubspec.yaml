@@ -2,7 +2,7 @@ name: host_commerce
 description: >-
   Reusable commerce contract layer for Flutter apps: membership/credits state,
   in-app purchase and restore, and paywall screens. Extracted from Veditor.
-version: 0.4.3
+version: 0.4.4
 publish_to: none
 
 environment:

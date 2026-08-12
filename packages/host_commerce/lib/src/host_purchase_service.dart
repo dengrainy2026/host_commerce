@@ -58,7 +58,7 @@ final class HostPurchaseService {
   void initialize() {
     _subscription ??= _client.purchaseStream.listen(
       _queuePurchaseUpdates,
-      onError: (_) {},
+      onError: _handlePurchaseStreamError,
     );
   }
 
@@ -75,7 +75,7 @@ final class HostPurchaseService {
       productIds,
     );
     if (response.error case final IAPError error) {
-      throw StateError(error.message);
+      throw StateError(error.toString());
     }
 
     final Map<String, HostStoreProduct> products = <String, HostStoreProduct>{};
@@ -198,6 +198,17 @@ final class HostPurchaseService {
         .catchError((_) {});
   }
 
+  void _handlePurchaseStreamError(Object error, StackTrace stackTrace) {
+    final _HostPurchaseOperation? purchase = _activePurchase;
+    if (purchase != null && !purchase.completed.isCompleted) {
+      purchase.completed.completeError(error, stackTrace);
+    }
+    final _HostRestoreOperation? restore = _activeRestore;
+    if (restore != null && !restore.completed.isCompleted) {
+      restore.completed.completeError(error, stackTrace);
+    }
+  }
+
   Future<void> _processPurchaseUpdates(List<PurchaseDetails> purchases) async {
     for (final PurchaseDetails purchase in purchases) {
       final _HostPurchaseOperation? activePurchase = _activePurchase;
@@ -254,7 +265,7 @@ final class HostPurchaseService {
         await _completeFailedPurchase(
           operation,
           purchase,
-          StateError(purchase.error?.message ?? 'The purchase failed.'),
+          StateError(purchase.error?.toString() ?? 'The purchase failed.'),
         );
         return;
       case PurchaseStatus.purchased:

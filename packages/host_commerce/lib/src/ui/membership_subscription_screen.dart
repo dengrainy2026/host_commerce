@@ -6,6 +6,7 @@ import '../commerce_catalog.dart';
 import '../commerce_rules.dart';
 import '../host_purchase_service.dart';
 import '../host_store_product.dart';
+import 'commerce_failure_feedback.dart';
 import 'commerce_legal_footer.dart';
 import 'commerce_loading_hud.dart';
 
@@ -63,11 +64,17 @@ class _MembershipSubscriptionScreenState
         _products = products;
         _isLoadingProducts = false;
       });
-    } on Object {
+    } on Object catch (error, stackTrace) {
       if (!mounted) {
         return;
       }
       setState(() => _isLoadingProducts = false);
+      showCommerceFailure(
+        context,
+        operation: 'Product loading',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -182,11 +189,16 @@ class _MembershipSubscriptionScreenState
                             height: 1.4,
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        CommerceLegalFooter(appearance: widget.appearance),
                       ],
                     );
                   },
+                ),
+              ),
+              bottomNavigationBar: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: CommerceLegalFooter(appearance: widget.appearance),
                 ),
               ),
             ),
@@ -205,7 +217,13 @@ class _MembershipSubscriptionScreenState
   Future<void> _continue() async {
     final Future<void> Function(MembershipPlan)? callback = widget.onSubscribe;
     if (callback == null || _isProcessing) {
-      _showCheckoutUnavailable();
+      if (callback == null) {
+        showCommerceFailure(
+          context,
+          operation: 'Purchase',
+          error: StateError('The purchase callback is not configured.'),
+        );
+      }
       return;
     }
     setState(() {
@@ -235,19 +253,30 @@ class _MembershipSubscriptionScreenState
       }
       setState(() => _isProcessing = false);
       _showPurchaseCancelled();
-    } on Object {
+    } on Object catch (error, stackTrace) {
       if (!mounted) {
         return;
       }
       setState(() => _isProcessing = false);
-      _showCheckoutUnavailable();
+      showCommerceFailure(
+        context,
+        operation: 'Purchase',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
   Future<void> _restore() async {
     final Future<void> Function()? callback = widget.onRestorePurchases;
     if (callback == null || _isProcessing) {
-      _showCheckoutUnavailable();
+      if (callback == null) {
+        showCommerceFailure(
+          context,
+          operation: 'Restore',
+          error: StateError('The restore callback is not configured.'),
+        );
+      }
       return;
     }
     setState(() {
@@ -269,24 +298,18 @@ class _MembershipSubscriptionScreenState
             content: Text('Purchases restored successfully.'),
           ),
         );
-    } on Object {
+    } on Object catch (error, stackTrace) {
       if (!mounted) {
         return;
       }
       setState(() => _isProcessing = false);
-      _showCheckoutUnavailable();
-    }
-  }
-
-  void _showCheckoutUnavailable() {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('Checkout is not connected yet.'),
-        ),
+      showCommerceFailure(
+        context,
+        operation: 'Restore',
+        error: error,
+        stackTrace: stackTrace,
       );
+    }
   }
 }
 

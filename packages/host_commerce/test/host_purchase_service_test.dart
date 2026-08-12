@@ -98,6 +98,39 @@ void main() {
     },
   );
 
+  test('purchase stream errors reach the active checkout caller', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+    )..initialize();
+
+    final Future<void> purchase = service.purchaseSubscription(
+      testCatalog.weeklySubscriptionId,
+    );
+    await _flushPurchaseStream();
+    client.emitError(StateError('StoreKit purchase stream disconnected'));
+
+    await expectLater(
+      purchase,
+      throwsA(
+        isA<StateError>().having(
+          (StateError error) => error.message,
+          'message',
+          'StoreKit purchase stream disconnected',
+        ),
+      ),
+    );
+    await service.dispose();
+    await client.dispose();
+  });
+
   test(
     'cancelled host purchase finishes StoreKit transaction before retry',
     () async {
@@ -466,6 +499,9 @@ final class _FakePurchaseClient implements HostInAppPurchaseClient {
 
   void emit(PurchaseDetails purchase) =>
       _controller.add(<PurchaseDetails>[purchase]);
+
+  void emitError(Object error) =>
+      _controller.addError(error, StackTrace.current);
 
   @override
   Future<bool> isAvailable() async => true;

@@ -5,6 +5,7 @@ import '../commerce_appearance.dart';
 import '../commerce_catalog.dart';
 import '../host_purchase_service.dart';
 import '../host_store_product.dart';
+import 'commerce_failure_feedback.dart';
 import 'commerce_legal_footer.dart';
 import 'commerce_loading_hud.dart';
 
@@ -62,11 +63,17 @@ class _CreditPurchaseScreenState extends State<CreditPurchaseScreen> {
         _products = products;
         _isLoadingProducts = false;
       });
-    } on Object {
+    } on Object catch (error, stackTrace) {
       if (!mounted) {
         return;
       }
       setState(() => _isLoadingProducts = false);
+      showCommerceFailure(
+        context,
+        operation: 'Product loading',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -179,11 +186,16 @@ class _CreditPurchaseScreenState extends State<CreditPurchaseScreen> {
                             height: 1.4,
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        CommerceLegalFooter(appearance: widget.appearance),
                       ],
                     );
                   },
+                ),
+              ),
+              bottomNavigationBar: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: CommerceLegalFooter(appearance: widget.appearance),
                 ),
               ),
             ),
@@ -198,7 +210,13 @@ class _CreditPurchaseScreenState extends State<CreditPurchaseScreen> {
   Future<void> _continue() async {
     final Future<int> Function(int)? callback = widget.onPurchase;
     if (callback == null || _isProcessing) {
-      _showCheckoutUnavailable();
+      if (callback == null) {
+        showCommerceFailure(
+          context,
+          operation: 'Purchase',
+          error: StateError('The purchase callback is not configured.'),
+        );
+      }
       return;
     }
     setState(() => _isProcessing = true);
@@ -222,24 +240,19 @@ class _CreditPurchaseScreenState extends State<CreditPurchaseScreen> {
       setState(() => _isProcessing = false);
       _showPurchaseCancelled();
       return;
-    } on Object {
+    } on Object catch (error, stackTrace) {
       if (!mounted) {
         return;
       }
       setState(() => _isProcessing = false);
-    }
-    _showCheckoutUnavailable();
-  }
-
-  void _showCheckoutUnavailable() {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('Checkout is not connected yet.'),
-        ),
+      showCommerceFailure(
+        context,
+        operation: 'Purchase',
+        error: error,
+        stackTrace: stackTrace,
       );
+      return;
+    }
   }
 }
 

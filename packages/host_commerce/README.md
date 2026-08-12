@@ -1,39 +1,26 @@
-<!--
-This README describes the package. If you publish this package to pub.dev,
-this README's contents appear on the landing page for your package.
+# host_commerce
 
-For information about how to write a good package README, see the guide for
-[writing package pages](https://dart.dev/tools/pub/writing-package-pages).
+Shared Native Host commerce runtime for Flutter tool applications.
 
-For general information about developing packages, see the Dart guide for
-[creating packages](https://dart.dev/guides/libraries/create-packages)
-and the Flutter guide for
-[developing packages and plugins](https://flutter.dev/to/develop-packages).
--->
+It provides one source of truth for membership, periodic member credits,
+permanent credits, verified consumable grants, redemption, purchase/restore,
+credit-gated tool execution, and reusable paywall UI.
 
-TODO: Put a short description of the package here that helps potential users
-know whether this package might be useful for them.
+## Production contract
 
-## Features
+- Inject one `StoreOperationCoordinator` into Native and H5 store operations.
+- Use `HttpHostPurchaseVerifier` with an HTTPS business endpoint.
+- Grant only a response bound to the requested product and transaction IDs.
+- Persist the verified entitlement or idempotent credit grant before completing
+  the platform transaction.
+- Use a unique `SecureHostCommerceStore.stateKey` for every generated app.
+- Run paid Native Tool work through `HostCreditGate`.
 
-TODO: List what your package can do. Maybe include images, gifs, or videos.
+When verification is absent, `RejectingHostPurchaseVerifier` fails closed.
+Generated applications should pin this package by Git tag and commit.
 
-## Getting started
+## Verification response
 
-TODO: List prerequisites and provide or point to information on how to
-start using the package.
-
-## Usage
-
-TODO: Include short and useful examples for package users. Add longer examples
-to `/example` folder.
-
-```dart
-const like = 'sample';
-```
-
-## Additional information
-
-TODO: Tell users more about the package: where to find more information, how to
-contribute to the package, how to file issues, what response they can expect
-from the package authors, and more.
+The verifier expects `verified`, `productId`, `transactionId`, and `kind`.
+Consumables also return `creditsGranted`; subscriptions return a future
+`membershipExpiresAt` ISO-8601 timestamp.

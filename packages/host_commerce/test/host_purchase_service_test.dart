@@ -32,7 +32,7 @@ void main() {
   });
 
   test(
-    'successful host purchase stores membership without verification',
+    'successful verified host purchase stores membership before finishing',
     () async {
       final HostCommerceRepository commerceRepository = HostCommerceRepository(
         MemoryHostCommerceStore(),
@@ -44,6 +44,7 @@ void main() {
         commerceRepository,
         catalog: testCatalog,
         client: client,
+        verifier: _AcceptingVerifier(testCatalog),
       )..initialize();
 
       final Future<void> purchase = service.purchaseSubscription(
@@ -76,6 +77,7 @@ void main() {
         commerceRepository,
         catalog: testCatalog,
         client: client,
+        verifier: _AcceptingVerifier(testCatalog),
       )..initialize();
 
       final Future<void> purchase = service.purchaseSubscription(
@@ -110,6 +112,7 @@ void main() {
         commerceRepository,
         catalog: testCatalog,
         client: client,
+        verifier: _AcceptingVerifier(testCatalog),
       )..initialize();
 
       final Future<void> firstPurchase = service.purchaseSubscription(
@@ -201,7 +204,7 @@ void main() {
   });
 
   test(
-    'successful host restore stores membership without verification',
+    'successful host restore verifies and stores membership before finishing',
     () async {
       final HostCommerceRepository commerceRepository = HostCommerceRepository(
         MemoryHostCommerceStore(),
@@ -213,6 +216,7 @@ void main() {
         commerceRepository,
         catalog: testCatalog,
         client: client,
+        verifier: _AcceptingVerifier(testCatalog),
         restoreSettleDuration: const Duration(milliseconds: 50),
       )..initialize();
 
@@ -250,6 +254,7 @@ void main() {
       commerceRepository,
       catalog: testCatalog,
       client: client,
+      verifier: _AcceptingVerifier(testCatalog),
     )..initialize();
 
     final String credits500 = testCatalog.productIdForCredits(500);
@@ -307,6 +312,7 @@ void main() {
       commerceRepository,
       catalog: testCatalog,
       client: client,
+      verifier: _AcceptingVerifier(testCatalog),
       operationCoordinator: coordinator,
     )..initialize();
     final Completer<void> finishH5 = Completer<void>();
@@ -361,6 +367,65 @@ void main() {
     );
     expect(client.consumablePurchases, 0);
 
+    await service.dispose();
+    await client.dispose();
+  });
+
+  test('backend rejection never grants or finishes a purchase', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+      verifier: const RejectingHostPurchaseVerifier(),
+    )..initialize();
+
+    final Future<void> purchase = service.purchaseSubscription(
+      testCatalog.weeklySubscriptionId,
+    );
+    await _flushPurchaseStream();
+    client.emit(
+      _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.purchased),
+    );
+
+    await expectLater(purchase, throwsA(isA<StateError>()));
+    expect(commerceRepository.state.isMember, isFalse);
+    expect(client.completedPurchases, 0);
+    await service.dispose();
+    await client.dispose();
+  });
+
+  test('analytics failure cannot strand a verified purchase', () async {
+    final HostCommerceRepository commerceRepository = HostCommerceRepository(
+      MemoryHostCommerceStore(),
+      scheduleBoundaryTimers: false,
+    );
+    await commerceRepository.initialize();
+    final _FakePurchaseClient client = _FakePurchaseClient();
+    final HostPurchaseService service = HostPurchaseService(
+      commerceRepository,
+      catalog: testCatalog,
+      client: client,
+      verifier: _AcceptingVerifier(testCatalog),
+      reporter: const _FailingReporter(),
+    )..initialize();
+
+    final Future<void> purchase = service.purchaseSubscription(
+      testCatalog.weeklySubscriptionId,
+    );
+    await _flushPurchaseStream();
+    client.emit(
+      _purchase(testCatalog.weeklySubscriptionId, PurchaseStatus.purchased),
+    );
+    await purchase;
+
+    expect(commerceRepository.state.isMember, isTrue);
+    expect(client.completedPurchases, 1);
     await service.dispose();
     await client.dispose();
   });
@@ -446,4 +511,42 @@ final class _FakePurchaseClient implements HostInAppPurchaseClient {
   }
 
   Future<void> dispose() => _controller.close();
+}
+
+final class _AcceptingVerifier implements HostPurchaseVerifier {
+  const _AcceptingVerifier(this.catalog);
+
+  final HostProductCatalog catalog;
+
+  @override
+  Future<HostVerifiedPurchase> verify(HostPurchaseEvidence evidence) async {
+    return switch (evidence.kind) {
+      HostPurchaseKind.credits => HostVerifiedPurchase(
+        productId: evidence.productId,
+        transactionId: evidence.transactionId,
+        kind: evidence.kind,
+        creditsGranted: catalog.creditsFor(evidence.productId),
+      ),
+      HostPurchaseKind.subscription => HostVerifiedPurchase(
+        productId: evidence.productId,
+        transactionId: evidence.transactionId,
+        kind: evidence.kind,
+        membershipExpiresAt: DateTime.now().toUtc().add(
+          catalog.membershipDurationFor(evidence.productId),
+        ),
+      ),
+    };
+  }
+}
+
+final class _FailingReporter implements HostVerifiedCommerceReporter {
+  const _FailingReporter();
+
+  @override
+  Future<void> report(
+    HostVerifiedPurchase purchase, {
+    required bool restored,
+    required PurchaseDetails storePurchase,
+    ProductDetails? storeProduct,
+  }) => Future<void>.error(StateError('analytics unavailable'));
 }

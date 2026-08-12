@@ -151,11 +151,7 @@ class _RedeemCodeDialogState extends State<RedeemCodeDialog> {
               const SizedBox(height: 9),
               Row(
                 children: <Widget>[
-                  Icon(
-                    icons.about,
-                    color: colors.onSurfaceVariant,
-                    size: 15,
-                  ),
+                  Icon(icons.about, color: colors.onSurfaceVariant, size: 15),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(

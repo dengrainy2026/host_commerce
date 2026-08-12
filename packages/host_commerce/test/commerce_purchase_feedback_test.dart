@@ -17,6 +17,7 @@ void main() {
           child: MembershipSubscriptionScreen(
             catalog: testCatalog,
             appearance: testAppearance,
+            rules: const CommerceRules(),
             onLoadProducts: _loadStoreProducts,
             onSubscribe: (_) => purchase.future,
           ),
@@ -77,6 +78,7 @@ void main() {
         child: MembershipSubscriptionScreen(
           catalog: testCatalog,
           appearance: testAppearance,
+          rules: const CommerceRules(),
           onLoadProducts: _loadStoreProducts,
           onSubscribe: (_) => purchase.future,
         ),
@@ -117,6 +119,35 @@ void main() {
     );
     expect(find.text('Purchase cancelled.'), findsOneWidget);
     expect(find.byType(MembershipSubscriptionScreen), findsOneWidget);
+  });
+
+  testWidgets('membership copy reflects custom commerce rules', (
+    WidgetTester tester,
+  ) async {
+    const CommerceRules rules = CommerceRules(
+      creationCost: 75,
+      memberCreditsPerPeriod: 600,
+      membershipCreditPeriod: Duration(days: 3),
+    );
+
+    await tester.pumpWidget(
+      const _ScreenLauncher(
+        child: MembershipSubscriptionScreen(
+          catalog: testCatalog,
+          appearance: testAppearance,
+          rules: rules,
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('600 credits every 3 days and member access.'),
+      findsOneWidget,
+    );
+    expect(find.text('600 credits every 3 days'), findsOneWidget);
+    expect(find.text('Each creation uses 75 credits'), findsOneWidget);
   });
 
   testWidgets('credit purchase shows HUD and refreshes the visible balance', (

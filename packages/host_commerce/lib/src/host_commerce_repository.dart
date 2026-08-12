@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'commerce_rules.dart';
 import 'host_commerce_state.dart';
 import 'host_commerce_store.dart';
 
@@ -9,25 +10,30 @@ typedef HostCommerceClock = DateTime Function();
 
 /// Owns the membership/credits entitlement state.
 ///
-/// Handles the weekly member allowance rollover, membership expiry, credit
+/// Handles the periodic member allowance rollover, membership expiry, credit
 /// consumption, and code redemption. Writes are funneled through a
 /// [HostCommerceStore]; a [HostCommerceClock] makes time-dependent behavior
 /// deterministic in tests.
 final class HostCommerceRepository extends ChangeNotifier {
   HostCommerceRepository(
     this._store, {
+    this.rules = const CommerceRules(),
     HostCommerceClock? clock,
     this.scheduleBoundaryTimers = true,
-  }) : _clock = clock ?? DateTime.now;
+  }) : _clock = clock ?? DateTime.now {
+    if (rules.membershipCreditPeriod <= Duration.zero) {
+      throw ArgumentError.value(
+        rules.membershipCreditPeriod,
+        'rules.membershipCreditPeriod',
+        'Must be positive.',
+      );
+    }
+  }
 
-  static const int initialCredits = 100;
-  static const int creationCost = 100;
-  static const int weeklyMemberCredits = 1000;
-  static const int redemptionCredits = 2000;
   static const String testRedemptionCode = 'TESTTESTTEST';
-  static const Duration membershipCreditPeriod = Duration(days: 7);
 
   final HostCommerceStore _store;
+  final CommerceRules rules;
   final HostCommerceClock _clock;
   final bool scheduleBoundaryTimers;
   HostCommerceState _state = const HostCommerceState();
@@ -41,7 +47,9 @@ final class HostCommerceRepository extends ChangeNotifier {
     if (_initialized) {
       return;
     }
-    final HostCommerceState stored = await _store.read();
+    final HostCommerceState stored = await _store.read(
+      fallback: _newUserState(),
+    );
     _state = _normalize(stored, _now());
     _initialized = true;
     if (!_sameState(stored, _state)) {
@@ -83,10 +91,11 @@ final class HostCommerceRepository extends ChangeNotifier {
       HostCommerceState(
         isMember: true,
         permanentCredits: _state.permanentCredits,
-        membershipCredits: weeklyMemberCredits,
+        membershipCredits: rules.memberCreditsPerPeriod,
         membershipExpiresAt: expiration,
         membershipCreditPeriodStartedAt: now,
         hasRedeemedCode: _state.hasRedeemedCode,
+        processedPurchaseIds: _state.processedPurchaseIds,
       ),
     );
   }
@@ -104,6 +113,81 @@ final class HostCommerceRepository extends ChangeNotifier {
     );
   }
 
+  /// Applies a backend-verified subscription exactly once per transaction.
+  Future<bool> recordVerifiedMembershipPurchase({
+    required String transactionId,
+    required DateTime membershipExpiresAt,
+  }) async {
+    final String normalizedId = transactionId.trim();
+    if (normalizedId.isEmpty) {
+      throw ArgumentError.value(
+        transactionId,
+        'transactionId',
+        'Must not be empty.',
+      );
+    }
+    await refresh();
+    if (_state.processedPurchaseIds.contains(normalizedId)) {
+      return false;
+    }
+    final DateTime expiration = membershipExpiresAt.toUtc();
+    final DateTime now = _now();
+    if (!expiration.isAfter(now)) {
+      throw StateError('Verified membership entitlement is not active.');
+    }
+    await _persist(
+      HostCommerceState(
+        isMember: true,
+        permanentCredits: _state.permanentCredits,
+        membershipCredits: rules.memberCreditsPerPeriod,
+        membershipExpiresAt: expiration,
+        membershipCreditPeriodStartedAt: now,
+        hasRedeemedCode: _state.hasRedeemedCode,
+        processedPurchaseIds: <String>{
+          ..._state.processedPurchaseIds,
+          normalizedId,
+        },
+      ),
+    );
+    return true;
+  }
+
+  /// Applies a backend-verified consumable exactly once per transaction.
+  Future<bool> recordVerifiedCreditPurchase({
+    required String transactionId,
+    required int credits,
+  }) async {
+    final String normalizedId = transactionId.trim();
+    if (normalizedId.isEmpty) {
+      throw ArgumentError.value(
+        transactionId,
+        'transactionId',
+        'Must not be empty.',
+      );
+    }
+    if (credits <= 0) {
+      throw ArgumentError.value(credits, 'credits', 'Must be positive.');
+    }
+    await refresh();
+    if (!_state.isMember) {
+      throw StateError('Only active members can buy credits.');
+    }
+    if (_state.processedPurchaseIds.contains(normalizedId)) {
+      return false;
+    }
+    await _persist(
+      _copyState(
+        _state,
+        permanentCredits: _state.permanentCredits + credits,
+        processedPurchaseIds: <String>{
+          ..._state.processedPurchaseIds,
+          normalizedId,
+        },
+      ),
+    );
+    return true;
+  }
+
   Future<bool> redeemCode(String code) async {
     if (code.trim() != testRedemptionCode) {
       return false;
@@ -112,7 +196,7 @@ final class HostCommerceRepository extends ChangeNotifier {
     await _persist(
       _copyState(
         _state,
-        permanentCredits: _state.permanentCredits + redemptionCredits,
+        permanentCredits: _state.permanentCredits + rules.redemptionCredits,
         hasRedeemedCode: true,
       ),
     );
@@ -143,7 +227,7 @@ final class HostCommerceRepository extends ChangeNotifier {
 
   Future<void> clear() async {
     await _store.clear();
-    _state = const HostCommerceState();
+    _state = _newUserState();
     _scheduleNextBoundary();
     notifyListeners();
   }
@@ -153,6 +237,7 @@ final class HostCommerceRepository extends ChangeNotifier {
       return HostCommerceState(
         permanentCredits: state.permanentCredits,
         hasRedeemedCode: state.hasRedeemedCode,
+        processedPurchaseIds: state.processedPurchaseIds,
       );
     }
 
@@ -160,32 +245,34 @@ final class HostCommerceRepository extends ChangeNotifier {
     DateTime? periodStarted = state.membershipCreditPeriodStartedAt?.toUtc();
     int membershipCredits = state.membershipCredits;
 
-    // Migrate the previous host-only membership flag into one local week.
+    // Migrate the previous host-only membership flag into one local period.
     if (expiration == null || periodStarted == null) {
-      expiration = now.add(membershipCreditPeriod);
+      expiration = now.add(rules.membershipCreditPeriod);
       periodStarted = now;
-      membershipCredits = weeklyMemberCredits;
+      membershipCredits = rules.memberCreditsPerPeriod;
     }
     if (!expiration.isAfter(now)) {
       return HostCommerceState(
         permanentCredits: state.permanentCredits,
         hasRedeemedCode: state.hasRedeemedCode,
+        processedPurchaseIds: state.processedPurchaseIds,
       );
     }
     if (periodStarted.isAfter(now)) {
       periodStarted = now;
-      membershipCredits = weeklyMemberCredits;
+      membershipCredits = rules.memberCreditsPerPeriod;
     }
     final int elapsedPeriods =
         now.difference(periodStarted).inMilliseconds ~/
-        membershipCreditPeriod.inMilliseconds;
+        rules.membershipCreditPeriod.inMilliseconds;
     if (elapsedPeriods > 0) {
       periodStarted = periodStarted.add(
         Duration(
-          milliseconds: membershipCreditPeriod.inMilliseconds * elapsedPeriods,
+          milliseconds:
+              rules.membershipCreditPeriod.inMilliseconds * elapsedPeriods,
         ),
       );
-      membershipCredits = weeklyMemberCredits;
+      membershipCredits = rules.memberCreditsPerPeriod;
     }
     return HostCommerceState(
       isMember: true,
@@ -194,6 +281,7 @@ final class HostCommerceRepository extends ChangeNotifier {
       membershipExpiresAt: expiration,
       membershipCreditPeriodStartedAt: periodStarted,
       hasRedeemedCode: state.hasRedeemedCode,
+      processedPurchaseIds: state.processedPurchaseIds,
     );
   }
 
@@ -214,10 +302,12 @@ final class HostCommerceRepository extends ChangeNotifier {
     if (expiration == null || periodStarted == null) {
       return;
     }
-    final DateTime weeklyBoundary = periodStarted.add(membershipCreditPeriod);
-    final DateTime nextBoundary = expiration.isBefore(weeklyBoundary)
+    final DateTime nextCreditBoundary = periodStarted.add(
+      rules.membershipCreditPeriod,
+    );
+    final DateTime nextBoundary = expiration.isBefore(nextCreditBoundary)
         ? expiration
-        : weeklyBoundary;
+        : nextCreditBoundary;
     final Duration delay = nextBoundary.difference(_now());
     _boundaryTimer = Timer(delay.isNegative ? Duration.zero : delay, () {
       unawaited(refresh());
@@ -225,6 +315,9 @@ final class HostCommerceRepository extends ChangeNotifier {
   }
 
   DateTime _now() => _clock().toUtc();
+
+  HostCommerceState _newUserState() =>
+      HostCommerceState(permanentCredits: rules.initialCredits);
 
   @override
   void dispose() {
@@ -238,6 +331,7 @@ HostCommerceState _copyState(
   int? permanentCredits,
   int? membershipCredits,
   bool? hasRedeemedCode,
+  Set<String>? processedPurchaseIds,
 }) => HostCommerceState(
   isMember: state.isMember,
   permanentCredits: permanentCredits ?? state.permanentCredits,
@@ -245,6 +339,7 @@ HostCommerceState _copyState(
   membershipExpiresAt: state.membershipExpiresAt,
   membershipCreditPeriodStartedAt: state.membershipCreditPeriodStartedAt,
   hasRedeemedCode: hasRedeemedCode ?? state.hasRedeemedCode,
+  processedPurchaseIds: processedPurchaseIds ?? state.processedPurchaseIds,
 );
 
 bool _sameState(HostCommerceState first, HostCommerceState second) =>
@@ -252,5 +347,7 @@ bool _sameState(HostCommerceState first, HostCommerceState second) =>
     first.permanentCredits == second.permanentCredits &&
     first.membershipCredits == second.membershipCredits &&
     first.membershipExpiresAt == second.membershipExpiresAt &&
-    first.membershipCreditPeriodStartedAt == second.membershipCreditPeriodStartedAt &&
-    first.hasRedeemedCode == second.hasRedeemedCode;
+    first.membershipCreditPeriodStartedAt ==
+        second.membershipCreditPeriodStartedAt &&
+    first.hasRedeemedCode == second.hasRedeemedCode &&
+    setEquals(first.processedPurchaseIds, second.processedPurchaseIds);

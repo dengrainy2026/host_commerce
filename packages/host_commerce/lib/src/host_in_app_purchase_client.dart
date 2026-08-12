@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_storekit/in_app_purchase_storekit.dart';
+import 'package:in_app_purchase_storekit/store_kit_2_wrappers.dart';
 import 'package:in_app_purchase_storekit/store_kit_wrappers.dart';
 
 /// Selects StoreKit 1 on iOS so stale queued transactions can be recovered
@@ -39,6 +40,8 @@ abstract interface class HostInAppPurchaseClient {
 /// not need platform pending-transaction recovery.
 abstract interface class HostPendingPurchaseClient {
   Future<List<PurchaseDetails>> pendingPurchasesFor(String productId);
+
+  Future<void> completePendingPurchase(PurchaseDetails purchase);
 }
 
 final class PluginHostInAppPurchaseClient
@@ -78,17 +81,60 @@ final class PluginHostInAppPurchaseClient
     if (defaultTargetPlatform != TargetPlatform.iOS) {
       return const <PurchaseDetails>[];
     }
-    final List<SKPaymentTransactionWrapper> transactions =
+    final List<SKPaymentTransactionWrapper> storeKit1Transactions =
         await SKPaymentQueueWrapper().transactions();
-    return transactions
-        .where(
-          (SKPaymentTransactionWrapper transaction) =>
-              transaction.payment.productIdentifier == productId,
-        )
-        .map(
-          (SKPaymentTransactionWrapper transaction) =>
-              AppStorePurchaseDetails.fromSKTransaction(transaction, ''),
-        )
-        .toList(growable: false);
+    final List<PurchaseDetails> purchases = <PurchaseDetails>[
+      for (final SKPaymentTransactionWrapper transaction
+          in storeKit1Transactions)
+        if (transaction.payment.productIdentifier == productId)
+          AppStorePurchaseDetails.fromSKTransaction(transaction, ''),
+    ];
+    final Set<String> transactionIds = <String>{
+      for (final PurchaseDetails purchase in purchases)
+        if (purchase.purchaseID case final String id) id,
+    };
+    try {
+      final List<SK2Transaction> storeKit2Transactions =
+          await SK2Transaction.unfinishedTransactions();
+      for (final SK2Transaction transaction in storeKit2Transactions) {
+        if (transaction.productId != productId ||
+            !transactionIds.add(transaction.id)) {
+          continue;
+        }
+        purchases.add(
+          SK2PurchaseDetails(
+            productID: transaction.productId,
+            purchaseID: transaction.id,
+            verificationData: PurchaseVerificationData(
+              localVerificationData: transaction.jsonRepresentation ?? '',
+              serverVerificationData: transaction.receiptData ?? '',
+              source: 'app_store',
+            ),
+            transactionDate: transaction.purchaseDate,
+            status: PurchaseStatus.purchased,
+          ),
+        );
+      }
+    } on Object catch (error) {
+      debugPrint(
+        '[host_commerce] Could not inspect legacy StoreKit 2 transactions: '
+        '$error',
+      );
+    }
+    return List<PurchaseDetails>.unmodifiable(purchases);
+  }
+
+  @override
+  Future<void> completePendingPurchase(PurchaseDetails purchase) {
+    if (purchase is SK2PurchaseDetails) {
+      final int? transactionId = int.tryParse(purchase.purchaseID ?? '');
+      if (transactionId == null) {
+        throw StateError(
+          'The StoreKit 2 transaction identifier is unavailable.',
+        );
+      }
+      return SK2Transaction.finish(transactionId);
+    }
+    return _plugin.completePurchase(purchase);
   }
 }

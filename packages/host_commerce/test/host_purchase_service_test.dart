@@ -94,6 +94,7 @@ void main() {
       );
       expect(client.nonConsumablePurchases, 0);
       expect(client.completedPurchases, 1);
+      expect(client.completedPendingPurchases, 1);
       await service.dispose();
       await client.dispose();
     },
@@ -137,9 +138,10 @@ void main() {
 
       await service.purchaseCredits(productId);
 
-    expect(commerceRepository.state.permanentCredits, 400);
+      expect(commerceRepository.state.permanentCredits, 400);
       expect(client.consumablePurchases, 0);
       expect(client.completedPurchases, 2);
+      expect(client.completedPendingPurchases, 2);
       await service.dispose();
       await client.dispose();
     },
@@ -182,6 +184,7 @@ void main() {
       expect(commerceRepository.state.isMember, isFalse);
       expect(client.nonConsumablePurchases, 0);
       expect(client.completedPurchases, 0);
+      expect(client.completedPendingPurchases, 0);
       await service.dispose();
       await client.dispose();
     },
@@ -617,6 +620,7 @@ final class _FakePurchaseClient
   final StreamController<List<PurchaseDetails>> _controller =
       StreamController<List<PurchaseDetails>>.broadcast();
   int completedPurchases = 0;
+  int completedPendingPurchases = 0;
   int consumablePurchases = 0;
   int nonConsumablePurchases = 0;
   List<PurchaseDetails> pendingPurchases = <PurchaseDetails>[];
@@ -635,6 +639,12 @@ final class _FakePurchaseClient
       pendingPurchases
           .where((PurchaseDetails purchase) => purchase.productID == productId)
           .toList(growable: false);
+
+  @override
+  Future<void> completePendingPurchase(PurchaseDetails purchase) async {
+    completedPendingPurchases += 1;
+    await completePurchase(purchase);
+  }
 
   @override
   Future<bool> isAvailable() async => true;

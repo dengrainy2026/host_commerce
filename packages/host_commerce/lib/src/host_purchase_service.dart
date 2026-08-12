@@ -196,7 +196,7 @@ final class HostPurchaseService {
         case PurchaseStatus.canceled:
         case PurchaseStatus.error:
           if (purchase.pendingCompletePurchase) {
-            await _client.completePurchase(purchase);
+            await recoveryClient.completePendingPurchase(purchase);
           }
           continue;
         case PurchaseStatus.purchased:
@@ -216,7 +216,7 @@ final class HostPurchaseService {
             );
           }
           if (purchase.pendingCompletePurchase) {
-            await _client.completePurchase(purchase);
+            await recoveryClient.completePendingPurchase(purchase);
           }
           recoveredSuccess = true;
       }
